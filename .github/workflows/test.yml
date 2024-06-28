@@ -1,0 +1,44 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - '**'
+    paths-ignore:
+      - 'README.md'
+      - 'LICENSE'
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - 'README.md'
+      - 'LICENSE'
+      - 'docs/**'
+
+jobs:
+  test:
+    name: Test
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build -v -trimpath -ldflags '-s -w' ./cmd/ddns-go
+
+      - name: Test
+        run: go test -v ./...
+
+      - name: Upload Binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: ddns-go-${{ github.sha }}-${{ matrix.os }}-x86-64
+          path: ddns-go*
