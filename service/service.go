@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/database64128/ddns-go/producer"
 	"github.com/database64128/ddns-go/producer/asusrouter"
@@ -225,11 +226,18 @@ func NewDomainManager(v4ch, v6ch <-chan producer.Message, keeper provider.Record
 // Run initiates the domain manager's record management process.
 // It blocks until the provided context is canceled.
 func (m *DomainManager) Run(ctx context.Context, logger *slog.Logger) {
+	done := ctx.Done()
+
 	for {
 		switch m.state {
 		case domainManagerStateFetching:
 			if err := m.keeper.FetchRecords(ctx); err != nil {
 				logger.LogAttrs(ctx, slog.LevelWarn, "Failed to fetch records", slog.Any("error", err))
+				select {
+				case <-done:
+					return
+				case <-time.After(time.Minute):
+				}
 				continue
 			}
 			logger.LogAttrs(ctx, slog.LevelInfo, "Fetched records")
@@ -239,7 +247,7 @@ func (m *DomainManager) Run(ctx context.Context, logger *slog.Logger) {
 			msg := m.cachedMessage
 
 			select {
-			case <-ctx.Done():
+			case <-done:
 				return
 			case v4msg := <-m.v4ch:
 				msg.IPv4 = v4msg.IPv4
@@ -268,6 +276,11 @@ func (m *DomainManager) Run(ctx context.Context, logger *slog.Logger) {
 		case domainManagerStateSyncing:
 			if err := m.keeper.SyncRecords(ctx); err != nil {
 				logger.LogAttrs(ctx, slog.LevelWarn, "Failed to sync records", slog.Any("error", err))
+				select {
+				case <-done:
+					return
+				case <-time.After(time.Minute):
+				}
 				continue
 			}
 			logger.LogAttrs(ctx, slog.LevelInfo, "Synced records")
