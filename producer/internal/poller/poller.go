@@ -50,18 +50,24 @@ func (p *Poller) Run(ctx context.Context, logger *slog.Logger) error {
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
 
+	p.poll(ctx, logger)
+
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			msg, err := p.source.Snapshot(ctx)
-			if err != nil {
-				logger.LogAttrs(ctx, slog.LevelWarn, "Failed to poll source", slog.Any("error", err))
-				continue
-			}
-			logger.LogAttrs(ctx, slog.LevelInfo, "Polled source", slog.Any("v4", msg.IPv4), slog.Any("v6", msg.IPv6))
-			p.broadcaster.Broadcast(msg)
+			p.poll(ctx, logger)
 		}
 	}
+}
+
+func (p *Poller) poll(ctx context.Context, logger *slog.Logger) {
+	msg, err := p.source.Snapshot(ctx)
+	if err != nil {
+		logger.LogAttrs(ctx, slog.LevelWarn, "Failed to poll source", slog.Any("error", err))
+		return
+	}
+	logger.LogAttrs(ctx, slog.LevelInfo, "Polled source", slog.Any("v4", msg.IPv4), slog.Any("v6", msg.IPv6))
+	p.broadcaster.Broadcast(msg)
 }
