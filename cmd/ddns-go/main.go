@@ -8,6 +8,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/database64128/ddns-go/internal/jsonhelper"
+	"github.com/database64128/ddns-go/service"
 	"github.com/lmittmann/tint"
 )
 
@@ -27,7 +29,10 @@ func main() {
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
 
 	var replaceAttr func(groups []string, attr slog.Attr) slog.Attr
 	if logNoTime {
@@ -44,6 +49,14 @@ func main() {
 		ReplaceAttr: replaceAttr,
 	}))
 
-	_ = ctx
-	_ = logger
+	var cfg service.Config
+	if err := jsonhelper.OpenAndDecodeDisallowUnknownFields(confPath, &cfg); err != nil {
+		logger.LogAttrs(ctx, slog.LevelError, "Failed to load configuration",
+			slog.String("path", confPath),
+			slog.Any("error", err),
+		)
+		os.Exit(1)
+	}
+
+	cfg.Run(ctx, logger)
 }

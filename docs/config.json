@@ -1,0 +1,83 @@
+{
+    "sources": [
+        {
+            "name": "asuswrt",
+            "type": "asusrouter",
+            "asusrouter": {
+                "base_url": "http://router.asus.com",
+                "username": "",
+                "password": "",
+                "ajax_status_ip_key": "wan0_ipaddr=",
+                "poll_interval": "5m"
+            }
+        },
+        {
+            "name": "ipify4",
+            "type": "ipapi",
+            "ipapi": {
+                "source": "text-ipv4",
+                "url": "https://api.ipify.org/",
+                "poll_interval": "5m"
+            }
+        },
+        {
+            "name": "ipify6",
+            "type": "ipapi",
+            "ipapi": {
+                "source": "text-ipv6",
+                "url": "https://api6.ipify.org/",
+                "poll_interval": "5m"
+            }
+        },
+        {
+            "name": "enp3s0",
+            "type": "iface",
+            "iface": {
+                "interface": "enp3s0",
+                "poll_interval": "90s"
+            }
+        }
+    ],
+    "accounts": [
+        {
+            "name": "cf",
+            "type": "cloudflare",
+            "bearer_token": ""
+        }
+    ],
+    "domains": [
+        {
+            "domain": "ddns.example.com",
+            "provider": "cloudflare",
+            "cloudflare": {
+                "zone_id": "",
+                "a_record": {
+                    "enabled": true,
+                    "proxied": false,
+                    "ttl": 60,
+                    "comment": "",
+                    "tags": []
+                },
+                "aaaa_record": {
+                    "enabled": true,
+                    "proxied": false,
+                    "ttl": 60,
+                    "comment": "",
+                    "tags": []
+                },
+                "https_record": {
+                    "enabled": true,
+                    "priority": 1,
+                    "ttl": 60,
+                    "target": ".",
+                    "svc_params": "alpn=\"h3,h2\" port=\"8443\"",
+                    "comment": "",
+                    "tags": []
+                }
+            },
+            "account": "cf",
+            "ipv4_source": "asuswrt",
+            "ipv6_source": "ipify6"
+        }
+    ]
+}
