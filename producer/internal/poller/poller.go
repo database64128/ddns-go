@@ -47,6 +47,7 @@ func (p *Poller) Subscribe() <-chan producer.Message {
 //
 // Run implements [producer.Producer.Run].
 func (p *Poller) Run(ctx context.Context, logger *slog.Logger) error {
+	done := ctx.Done()
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
 
@@ -54,7 +55,7 @@ func (p *Poller) Run(ctx context.Context, logger *slog.Logger) error {
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-done:
 			return nil
 		case <-ticker.C:
 			p.poll(ctx, logger)
