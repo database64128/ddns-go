@@ -49,6 +49,9 @@ func (s *Source) Snapshot(_ context.Context) (producer.Message, error) {
 			continue
 		}
 		ip = ip.Unmap()
+		if ip.IsLinkLocalUnicast() {
+			continue
+		}
 		if ip.Is4() {
 			if !msg.IPv4.IsValid() {
 				msg.IPv4 = ip
