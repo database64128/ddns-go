@@ -14,12 +14,14 @@ import (
 )
 
 var (
-	logNoTime bool
-	logLevel  slog.Level
-	confPath  string
+	logNoColor bool
+	logNoTime  bool
+	logLevel   slog.Level
+	confPath   string
 )
 
 func init() {
+	flag.BoolVar(&logNoColor, "logNoColor", false, "Disable colors in log output")
 	flag.BoolVar(&logNoTime, "logNoTime", false, "Disable timestamps in log output")
 	flag.TextVar(&logLevel, "logLevel", slog.LevelInfo, "Log level")
 	flag.StringVar(&confPath, "confPath", "config.json", "Path to the configuration file")
@@ -47,6 +49,7 @@ func main() {
 	logger := slog.New(tint.NewHandler(os.Stderr, &tint.Options{
 		Level:       logLevel,
 		ReplaceAttr: replaceAttr,
+		NoColor:     logNoColor,
 	}))
 
 	var cfg service.Config
