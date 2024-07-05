@@ -3,6 +3,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -32,6 +33,10 @@ type Config struct {
 // Run runs the DDNS service with the provided configuration.
 // It blocks until the provided context is canceled.
 func (cfg *Config) Run(ctx context.Context, logger *slog.Logger) error {
+	if len(cfg.Sources) == 0 {
+		return errors.New("no sources configured")
+	}
+
 	producerByName := make(map[string]producer.Producer, len(cfg.Sources))
 	for _, sourceCfg := range cfg.Sources {
 		if _, ok := producerByName[sourceCfg.Name]; ok {
@@ -98,25 +103,32 @@ func (cfg *Config) Run(ctx context.Context, logger *slog.Logger) error {
 
 		dm := NewDomainManager(v4ch, v6ch, keeper)
 		dmLogger := logger.With("domain", domainCfg.Domain)
+		dmLogger.LogAttrs(ctx, slog.LevelInfo, "Starting domain manager")
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			dm.Run(ctx, dmLogger)
+			dmLogger.LogAttrs(ctx, slog.LevelInfo, "Stopped domain manager")
 		}()
 	}
 
 	wg.Add(len(producerByName))
 	for producerName, producer := range producerByName {
 		producerLogger := logger.With("producer", producerName)
+		producerLogger.LogAttrs(ctx, slog.LevelInfo, "Starting producer")
 		go func() {
 			defer wg.Done()
 			if err := producer.Run(ctx, producerLogger); err != nil {
 				producerLogger.LogAttrs(ctx, slog.LevelError, "Producer failed", slog.Any("error", err))
+				return
 			}
+			producerLogger.LogAttrs(ctx, slog.LevelInfo, "Stopped producer")
 		}()
 	}
 
+	logger.LogAttrs(ctx, slog.LevelInfo, "Service started")
 	wg.Wait()
+	logger.LogAttrs(ctx, slog.LevelInfo, "Service stopped")
 	return nil
 }
 
