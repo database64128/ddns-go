@@ -1,0 +1,10 @@
+[Unit]
+Description=DDNS service supporting dynamic updates of A, AAAA, and HTTPS records
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/ddns-go -confPath /etc/ddns-go/%i.json -logNoTime
+
+[Install]
+WantedBy=multi-user.target
