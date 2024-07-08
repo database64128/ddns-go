@@ -22,6 +22,12 @@ type RecordKeeper interface {
 
 	// SyncRecords synchronizes the domain's managed DNS records with the source state,
 	// creating or updating records as needed.
+	//
+	// This method MUST NOT be called before [FetchRecords] and [FeedSourceState].
+	// The following errors are returned directly when incorrect usage is detected:
+	//
+	//   - [ErrKeeperFetchFirst]: [FetchRecords] was not called before.
+	//   - [ErrKeeperFeedFirst]: [FeedSourceState] was not called before.
 	SyncRecords(ctx context.Context) error
 }
 
