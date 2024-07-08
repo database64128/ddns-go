@@ -8,8 +8,9 @@ import (
 )
 
 var (
-	ErrKeeperFeedFirst  = errors.New("call FeedSourceState first")
-	ErrKeeperFetchFirst = errors.New("call FetchRecords first")
+	ErrKeeperFeedFirst    = errors.New("call FeedSourceState first")
+	ErrKeeperFetchFirst   = errors.New("call FetchRecords first")
+	ErrAPIResponseFailure = errors.New("API response indicates failure")
 )
 
 // RecordKeeper interacts with a DNS provider to manage a domain's DNS records.
@@ -23,11 +24,14 @@ type RecordKeeper interface {
 	// SyncRecords synchronizes the domain's managed DNS records with the source state,
 	// creating or updating records as needed.
 	//
-	// This method MUST NOT be called before [FetchRecords] and [FeedSourceState].
+	// This method MUST NOT be called before [FeedSourceState] and [FetchRecords].
 	// The following errors are returned directly when incorrect usage is detected:
 	//
-	//   - [ErrKeeperFetchFirst]: [FetchRecords] was not called before.
 	//   - [ErrKeeperFeedFirst]: [FeedSourceState] was not called before.
+	//   - [ErrKeeperFetchFirst]: [FetchRecords] was not called before.
+	//
+	// When the API response indicates a failure, the returned error must wrap
+	// [ErrAPIResponseFailure].
 	SyncRecords(ctx context.Context) error
 }
 

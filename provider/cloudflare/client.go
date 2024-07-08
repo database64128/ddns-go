@@ -1,6 +1,7 @@
 package cloudflare
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/database64128/ddns-go/internal/httphelper"
+	"github.com/database64128/ddns-go/provider"
 )
 
 const (
@@ -229,18 +231,24 @@ func clientDo[R any](client *http.Client, authorizationHeader string, newRequest
 	}
 	defer resp.Body.Close()
 
+	var buf bytes.Buffer
+	buf.Grow(max(0, int(resp.ContentLength)))
+	if _, err = io.Copy(&buf, resp.Body); err != nil {
+		return result, fmt.Errorf("failed to read response: %w", err)
+	}
+	bodyBytes := buf.Bytes()
+
 	if resp.StatusCode != http.StatusOK {
-		msg, _ := io.ReadAll(resp.Body)
-		return result, fmt.Errorf("unexpected status code %d: %q", resp.StatusCode, msg)
+		return result, fmt.Errorf("%w: unexpected status code %d: %q", provider.ErrAPIResponseFailure, resp.StatusCode, bodyBytes)
 	}
 
 	var response Response[R]
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return result, fmt.Errorf("failed to decode response: %w", err)
+	if err = json.Unmarshal(bodyBytes, &response); err != nil {
+		return result, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
 	if !response.Success {
-		return result, fmt.Errorf("request failed: %v", response.Errors)
+		return result, fmt.Errorf("%w: %v", provider.ErrAPIResponseFailure, response.Errors)
 	}
 
 	return response.Result, nil

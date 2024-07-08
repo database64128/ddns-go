@@ -316,11 +316,16 @@ func (m *DomainManager) Run(ctx context.Context, logger *slog.Logger) {
 			if err := m.keeper.SyncRecords(ctx); err != nil {
 				logger.LogAttrs(ctx, slog.LevelWarn, "Failed to sync records", slog.Any("error", err))
 				switch err {
-				case provider.ErrKeeperFetchFirst:
-					m.state = domainManagerStateFetching
 				case provider.ErrKeeperFeedFirst:
 					m.state = domainManagerStateFeeding
+				case provider.ErrKeeperFetchFirst:
+					m.state = domainManagerStateFetching
 				default:
+					if errors.Is(err, provider.ErrAPIResponseFailure) {
+						// The failure could be caused by outdated cached records.
+						// Fetch the records again to ensure they are up-to-date.
+						m.state = domainManagerStateFetching
+					}
 					select {
 					case <-done:
 						return
