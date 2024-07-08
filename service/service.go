@@ -211,8 +211,10 @@ type DomainConfig struct {
 type domainManagerState uint
 
 const (
-	domainManagerStateFetching domainManagerState = iota
+	domainManagerStateInitialWait domainManagerState = iota
+	domainManagerStateUpdateWait
 	domainManagerStateFeeding
+	domainManagerStateFetching
 	domainManagerStateSyncing
 )
 
@@ -242,6 +244,61 @@ func (m *DomainManager) Run(ctx context.Context, logger *slog.Logger) {
 
 	for {
 		switch m.state {
+		case domainManagerStateInitialWait:
+			if m.v4ch != nil {
+				select {
+				case <-done:
+					return
+				case v4msg := <-m.v4ch:
+					m.cachedMessage.IPv4 = v4msg.IPv4
+				}
+			}
+
+			if m.v6ch != nil {
+				select {
+				case <-done:
+					return
+				case v6msg := <-m.v6ch:
+					m.cachedMessage.IPv6 = v6msg.IPv6
+				}
+			}
+
+			m.state = domainManagerStateFeeding
+
+		case domainManagerStateUpdateWait:
+			msg := m.cachedMessage
+
+			select {
+			case <-done:
+				return
+			case v4msg := <-m.v4ch:
+				msg.IPv4 = v4msg.IPv4
+				select {
+				case v6msg := <-m.v6ch:
+					msg.IPv6 = v6msg.IPv6
+				default:
+				}
+			case v6msg := <-m.v6ch:
+				msg.IPv6 = v6msg.IPv6
+				select {
+				case v4msg := <-m.v4ch:
+					msg.IPv4 = v4msg.IPv4
+				default:
+				}
+			}
+
+			if msg == m.cachedMessage {
+				continue
+			}
+
+			m.cachedMessage = msg
+			m.state = domainManagerStateFeeding
+
+		case domainManagerStateFeeding:
+			m.keeper.FeedSourceState(m.cachedMessage)
+			logger.LogAttrs(ctx, slog.LevelInfo, "Fed source state", slog.Any("v4", m.cachedMessage.IPv4), slog.Any("v6", m.cachedMessage.IPv6))
+			m.state = domainManagerStateFetching
+
 		case domainManagerStateFetching:
 			if err := m.keeper.FetchRecords(ctx); err != nil {
 				logger.LogAttrs(ctx, slog.LevelWarn, "Failed to fetch records", slog.Any("error", err))
@@ -253,45 +310,7 @@ func (m *DomainManager) Run(ctx context.Context, logger *slog.Logger) {
 				continue
 			}
 			logger.LogAttrs(ctx, slog.LevelInfo, "Fetched records")
-			m.state = domainManagerStateFeeding
-
-		case domainManagerStateFeeding:
-			msg := m.cachedMessage
-
-			select {
-			case <-done:
-				return
-			case v4msg := <-m.v4ch:
-				if v4msg.IPv4.IsValid() {
-					msg.IPv4 = v4msg.IPv4
-				}
-			case v6msg := <-m.v6ch:
-				if v6msg.IPv6.IsValid() {
-					msg.IPv6 = v6msg.IPv6
-				}
-			}
-
-			if msg == m.cachedMessage {
-				continue
-			}
-
-			if m.v4ch != nil {
-				for !msg.IPv4.IsValid() {
-					v4msg := <-m.v4ch
-					msg.IPv4 = v4msg.IPv4
-				}
-			}
-			if m.v6ch != nil {
-				for !msg.IPv6.IsValid() {
-					v6msg := <-m.v6ch
-					msg.IPv6 = v6msg.IPv6
-				}
-			}
-
-			m.keeper.FeedSourceState(msg)
-			logger.LogAttrs(ctx, slog.LevelInfo, "Fed source state", slog.Any("v4", msg.IPv4), slog.Any("v6", msg.IPv6))
 			m.state = domainManagerStateSyncing
-			m.cachedMessage = msg
 
 		case domainManagerStateSyncing:
 			if err := m.keeper.SyncRecords(ctx); err != nil {
@@ -311,7 +330,7 @@ func (m *DomainManager) Run(ctx context.Context, logger *slog.Logger) {
 				continue
 			}
 			logger.LogAttrs(ctx, slog.LevelInfo, "Synced records")
-			m.state = domainManagerStateFeeding
+			m.state = domainManagerStateUpdateWait
 
 		default:
 			panic("unreachable")
