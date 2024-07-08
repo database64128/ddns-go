@@ -114,14 +114,14 @@ func (k *Keeper) FetchRecords(ctx context.Context) error {
 		case "A":
 			if k.config.ARecord.Enabled {
 				if k.aRecord.ID != "" {
-					return fmt.Errorf("duplicate A record with ID %q", record.ID)
+					return fmt.Errorf("unsupported additional A record with ID %q", record.ID)
 				}
 				k.aRecord = record
 			}
 		case "AAAA":
 			if k.config.AAAARecord.Enabled {
 				if k.aaaaRecord.ID != "" {
-					return fmt.Errorf("duplicate AAAA record with ID %q", record.ID)
+					return fmt.Errorf("unsupported additional AAAA record with ID %q", record.ID)
 				}
 				k.aaaaRecord = record
 			}
@@ -132,6 +132,8 @@ func (k *Keeper) FetchRecords(ctx context.Context) error {
 				}
 				k.httpsRecord = record
 			}
+		case "CNAME":
+			return fmt.Errorf("found CNAME record with ID %q", record.ID)
 		}
 	}
 
