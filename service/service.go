@@ -262,22 +262,30 @@ func (m *DomainManager) Run(ctx context.Context, logger *slog.Logger) {
 			case <-done:
 				return
 			case v4msg := <-m.v4ch:
-				msg.IPv4 = v4msg.IPv4
+				if v4msg.IPv4.IsValid() {
+					msg.IPv4 = v4msg.IPv4
+				}
 			case v6msg := <-m.v6ch:
-				msg.IPv6 = v6msg.IPv6
+				if v6msg.IPv6.IsValid() {
+					msg.IPv6 = v6msg.IPv6
+				}
 			}
 
 			if msg == m.cachedMessage {
 				continue
 			}
 
-			if !msg.IPv4.IsValid() && m.v4ch != nil {
-				v4msg := <-m.v4ch
-				msg.IPv4 = v4msg.IPv4
+			if m.v4ch != nil {
+				for !msg.IPv4.IsValid() {
+					v4msg := <-m.v4ch
+					msg.IPv4 = v4msg.IPv4
+				}
 			}
-			if !msg.IPv6.IsValid() && m.v6ch != nil {
-				v6msg := <-m.v6ch
-				msg.IPv6 = v6msg.IPv6
+			if m.v6ch != nil {
+				for !msg.IPv6.IsValid() {
+					v6msg := <-m.v6ch
+					msg.IPv6 = v6msg.IPv6
+				}
 			}
 
 			m.keeper.FeedSourceState(msg)
@@ -288,10 +296,17 @@ func (m *DomainManager) Run(ctx context.Context, logger *slog.Logger) {
 		case domainManagerStateSyncing:
 			if err := m.keeper.SyncRecords(ctx); err != nil {
 				logger.LogAttrs(ctx, slog.LevelWarn, "Failed to sync records", slog.Any("error", err))
-				select {
-				case <-done:
-					return
-				case <-time.After(time.Minute):
+				switch err {
+				case provider.ErrKeeperFetchFirst:
+					m.state = domainManagerStateFetching
+				case provider.ErrKeeperFeedFirst:
+					m.state = domainManagerStateFeeding
+				default:
+					select {
+					case <-done:
+						return
+					case <-time.After(time.Minute):
+					}
 				}
 				continue
 			}
