@@ -213,7 +213,6 @@ type domainManagerState uint
 const (
 	domainManagerStateInitialWait domainManagerState = iota
 	domainManagerStateUpdateWait
-	domainManagerStateFeeding
 	domainManagerStateFetching
 	domainManagerStateSyncing
 )
@@ -263,7 +262,9 @@ func (m *DomainManager) Run(ctx context.Context, logger *slog.Logger) {
 				}
 			}
 
-			m.state = domainManagerStateFeeding
+			m.keeper.FeedSourceState(m.cachedMessage)
+			logger.LogAttrs(ctx, slog.LevelInfo, "Fed source state", slog.Any("v4", m.cachedMessage.IPv4), slog.Any("v6", m.cachedMessage.IPv6))
+			m.state = domainManagerStateFetching
 
 		case domainManagerStateUpdateWait:
 			msg := m.cachedMessage
@@ -291,13 +292,10 @@ func (m *DomainManager) Run(ctx context.Context, logger *slog.Logger) {
 				continue
 			}
 
+			m.keeper.FeedSourceState(msg)
+			logger.LogAttrs(ctx, slog.LevelInfo, "Fed source state", slog.Any("v4", msg.IPv4), slog.Any("v6", msg.IPv6))
+			m.state = domainManagerStateSyncing
 			m.cachedMessage = msg
-			m.state = domainManagerStateFeeding
-
-		case domainManagerStateFeeding:
-			m.keeper.FeedSourceState(m.cachedMessage)
-			logger.LogAttrs(ctx, slog.LevelInfo, "Fed source state", slog.Any("v4", m.cachedMessage.IPv4), slog.Any("v6", m.cachedMessage.IPv6))
-			m.state = domainManagerStateFetching
 
 		case domainManagerStateFetching:
 			if err := m.keeper.FetchRecords(ctx); err != nil {
@@ -317,7 +315,7 @@ func (m *DomainManager) Run(ctx context.Context, logger *slog.Logger) {
 				logger.LogAttrs(ctx, slog.LevelWarn, "Failed to sync records", slog.Any("error", err))
 				switch err {
 				case provider.ErrKeeperFeedFirst:
-					m.state = domainManagerStateFeeding
+					m.state = domainManagerStateUpdateWait
 				case provider.ErrKeeperFetchFirst:
 					m.state = domainManagerStateFetching
 				default:
