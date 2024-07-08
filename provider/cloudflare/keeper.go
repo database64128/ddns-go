@@ -74,6 +74,7 @@ type Keeper struct {
 	aRecord        DNSRecord
 	aaaaRecord     DNSRecord
 	httpsRecord    DNSRecord
+	isFed          bool
 	hasFetched     bool
 }
 
@@ -87,6 +88,15 @@ func NewKeeper(domain string, client *Client, config KeeperConfig) *Keeper {
 }
 
 var _ provider.RecordKeeper = (*Keeper)(nil)
+
+// FeedSourceState feeds the current IP addresses of the source to the record keeper.
+//
+// FeedSourceState implements [provider.RecordKeeper.FeedSourceState].
+func (k *Keeper) FeedSourceState(msg producer.Message) {
+	k.sourceIPv4Text = msg.IPv4.AppendTo(k.sourceIPv4Text[:0])
+	k.sourceIPv6Text = msg.IPv6.AppendTo(k.sourceIPv6Text[:0])
+	k.isFed = true
+}
 
 // clearFetched clears the fetched state of the managed records.
 func (k *Keeper) clearFetched() {
@@ -141,38 +151,16 @@ func (k *Keeper) FetchRecords(ctx context.Context) error {
 	return nil
 }
 
-// FeedSourceState feeds the current IP addresses of the source to the record keeper.
-//
-// FeedSourceState implements [provider.RecordKeeper.FeedSourceState].
-func (k *Keeper) FeedSourceState(msg producer.Message) {
-	k.sourceIPv4Text = msg.IPv4.AppendTo(k.sourceIPv4Text[:0])
-	k.sourceIPv6Text = msg.IPv6.AppendTo(k.sourceIPv6Text[:0])
-}
-
-// isFed returns whether the source state satisfies the requirements of the managed records.
-func (k *Keeper) isFed() bool {
-	if k.config.ARecord.Enabled && len(k.sourceIPv4Text) == 0 {
-		return false
-	}
-	if k.config.AAAARecord.Enabled && len(k.sourceIPv6Text) == 0 {
-		return false
-	}
-	if k.config.HTTPSRecord.Enabled && len(k.sourceIPv4Text) == 0 && len(k.sourceIPv6Text) == 0 {
-		return false
-	}
-	return true
-}
-
 // SyncRecords synchronizes the domain's managed DNS records with the source state,
 // creating or updating records as needed.
 //
 // SyncRecords implements [provider.RecordKeeper.SyncRecords].
 func (k *Keeper) SyncRecords(ctx context.Context) error {
+	if !k.isFed {
+		return provider.ErrKeeperFeedFirst
+	}
 	if !k.hasFetched {
 		return provider.ErrKeeperFetchFirst
-	}
-	if !k.isFed() {
-		return provider.ErrKeeperFeedFirst
 	}
 
 	if k.config.ARecord.Enabled {
@@ -196,6 +184,16 @@ func (k *Keeper) SyncRecords(ctx context.Context) error {
 
 // syncARecord synchronizes the managed A record with the source state.
 func (k *Keeper) syncARecord(ctx context.Context) (err error) {
+	if len(k.sourceIPv4Text) == 0 {
+		if k.aRecord.ID != "" {
+			if err := k.client.DeleteDNSRecord(ctx, k.config.ZoneID, k.aRecord.ID); err != nil {
+				return fmt.Errorf("failed to delete A record: %w", err)
+			}
+			k.aRecord.ID = ""
+		}
+		return nil
+	}
+
 	if k.aRecord.ID == "" {
 		k.aRecord, err = k.client.CreateDNSRecord(ctx, k.config.ZoneID, &DNSRecord{
 			Name:    k.domain,
@@ -239,6 +237,16 @@ func (k *Keeper) syncARecord(ctx context.Context) (err error) {
 
 // syncAAAARecord synchronizes the managed AAAA record with the source state.
 func (k *Keeper) syncAAAARecord(ctx context.Context) (err error) {
+	if len(k.sourceIPv6Text) == 0 {
+		if k.aaaaRecord.ID != "" {
+			if err := k.client.DeleteDNSRecord(ctx, k.config.ZoneID, k.aaaaRecord.ID); err != nil {
+				return fmt.Errorf("failed to delete AAAA record: %w", err)
+			}
+			k.aaaaRecord.ID = ""
+		}
+		return nil
+	}
+
 	if k.aaaaRecord.ID == "" {
 		k.aaaaRecord, err = k.client.CreateDNSRecord(ctx, k.config.ZoneID, &DNSRecord{
 			Name:    k.domain,

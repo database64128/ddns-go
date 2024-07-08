@@ -8,17 +8,17 @@ import (
 )
 
 var (
-	ErrKeeperFetchFirst = errors.New("call FetchRecords first")
 	ErrKeeperFeedFirst  = errors.New("call FeedSourceState first")
+	ErrKeeperFetchFirst = errors.New("call FetchRecords first")
 )
 
 // RecordKeeper interacts with a DNS provider to manage a domain's DNS records.
 type RecordKeeper interface {
-	// FetchRecords fetches the state of the domain's managed DNS records.
-	FetchRecords(ctx context.Context) error
-
 	// FeedSourceState feeds the current IP addresses of the source to the record keeper.
 	FeedSourceState(msg producer.Message)
+
+	// FetchRecords fetches the state of the domain's managed DNS records.
+	FetchRecords(ctx context.Context) error
 
 	// SyncRecords synchronizes the domain's managed DNS records with the source state,
 	// creating or updating records as needed.
