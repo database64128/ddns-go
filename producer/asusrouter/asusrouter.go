@@ -1,3 +1,4 @@
+// Package asusrouter implements the ASUS router producer.
 package asusrouter
 
 import (

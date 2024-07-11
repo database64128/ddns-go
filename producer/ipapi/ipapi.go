@@ -1,3 +1,4 @@
+// Package ipapi implements the IP API producer.
 package ipapi
 
 import (

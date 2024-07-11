@@ -1,3 +1,4 @@
+// Package iface implements the network interface producer.
 package iface
 
 import (
@@ -67,7 +68,7 @@ func (s *Source) Snapshot(_ context.Context) (producer.Message, error) {
 
 // ProducerConfig contains configuration options for the network interface producer.
 type ProducerConfig struct {
-	// Interface is the name of the network interface to use.
+	// Interface is the name of the network interface to monitor.
 	Interface string `json:"interface"`
 
 	// PollInterval is the interval between polling the network interface.

@@ -1,3 +1,4 @@
+// Package provider provides interfaces and types for managing DNS records with DNS providers.
 package provider
 
 import (

@@ -1,5 +1,5 @@
-// Package producer defines interfaces and types for IP address change detection and notification.
-// It supports various kinds of producers that monitor IP address changes and notify subscribers
+// Package producer provides interfaces and types for IP address change detection and notification.
+// It includes various kinds of producers that monitor IP address changes and notify subscribers
 // through a unified interface.
 package producer
 

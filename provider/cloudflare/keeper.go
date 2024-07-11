@@ -1,3 +1,4 @@
+// Package cloudflare implements the Cloudflare DNS provider.
 package cloudflare
 
 import (
