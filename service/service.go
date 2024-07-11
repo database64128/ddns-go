@@ -12,6 +12,7 @@ import (
 
 	"github.com/database64128/ddns-go/producer"
 	"github.com/database64128/ddns-go/producer/asusrouter"
+	"github.com/database64128/ddns-go/producer/bsdroute"
 	"github.com/database64128/ddns-go/producer/iface"
 	"github.com/database64128/ddns-go/producer/ipapi"
 	"github.com/database64128/ddns-go/provider"
@@ -141,7 +142,8 @@ type SourceConfig struct {
 	//
 	//   - "asusrouter": ASUS router.
 	//   - "ipapi": IP address API.
-	//   - "iface": Network interface.
+	//   - "iface": Network interface (generic).
+	//   - "bsdroute": Network interface (Darwin, DragonFly BSD, FreeBSD, NetBSD, OpenBSD).
 	Type string `json:"type"`
 
 	// ASUSRouter is the producer configuration for an ASUS router source.
@@ -150,8 +152,11 @@ type SourceConfig struct {
 	// IPAPI is the producer configuration for an IP address API source.
 	IPAPI ipapi.ProducerConfig `json:"ipapi"`
 
-	// Iface is the producer configuration for a network interface source.
+	// Iface is the producer configuration for a generic network interface source.
 	Iface iface.ProducerConfig `json:"iface"`
+
+	// BSDRoute is the producer configuration for a bsdroute network interface source.
+	BSDRoute bsdroute.ProducerConfig `json:"bsdroute"`
 }
 
 // NewProducer creates a new [producer.Producer] from the configuration.
@@ -163,6 +168,8 @@ func (cfg *SourceConfig) NewProducer(client *http.Client) (producer.Producer, er
 		return cfg.IPAPI.NewProducer(client)
 	case "iface":
 		return cfg.Iface.NewProducer()
+	case "bsdroute":
+		return cfg.BSDRoute.NewProducer()
 	default:
 		return nil, fmt.Errorf("unknown source type: %q", cfg.Type)
 	}
