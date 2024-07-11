@@ -85,5 +85,9 @@ func (s *Source) snapshot() (producer.Message, error) {
 		}
 	}
 
+	if ifindex == 0 {
+		return producer.Message{}, fmt.Errorf("no such network interface: %q", s.name)
+	}
+
 	return msg, nil
 }
