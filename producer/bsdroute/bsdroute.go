@@ -64,6 +64,10 @@ type ProducerConfig struct {
 
 // NewProducer creates a new [producer.Producer] that monitors the IP addresses of a network interface.
 func (cfg *ProducerConfig) NewProducer() (producer.Producer, error) {
+	if cfg.Interface == "" {
+		return nil, errors.New("interface name is required")
+	}
+
 	source, err := NewSource(cfg.Interface)
 	if err != nil {
 		return nil, err

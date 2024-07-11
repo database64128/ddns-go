@@ -58,6 +58,9 @@ func (cfg *Config) Run(ctx context.Context, logger *slog.Logger) error {
 			if _, ok := cfAPIClientByName[accountCfg.Name]; ok {
 				return fmt.Errorf("duplicate account: %q", accountCfg.Name)
 			}
+			if accountCfg.BearerToken == "" {
+				return fmt.Errorf("bearer token not specified for account %q", accountCfg.Name)
+			}
 			client := cloudflare.NewClient(http.DefaultClient, accountCfg.BearerToken)
 			cfAPIClientByName[accountCfg.Name] = client
 		default:
@@ -68,7 +71,10 @@ func (cfg *Config) Run(ctx context.Context, logger *slog.Logger) error {
 	var wg sync.WaitGroup
 
 	domainSet := make(map[string]struct{}, len(cfg.Domains))
-	for _, domainCfg := range cfg.Domains {
+	for i, domainCfg := range cfg.Domains {
+		if domainCfg.Domain == "" {
+			return fmt.Errorf("unspecified domain at domains[%d]", i)
+		}
 		if _, ok := domainSet[domainCfg.Domain]; ok {
 			return fmt.Errorf("duplicate domain: %q", domainCfg.Domain)
 		}
@@ -90,16 +96,22 @@ func (cfg *Config) Run(ctx context.Context, logger *slog.Logger) error {
 			v6ch = producer.Subscribe()
 		}
 
-		var keeper provider.RecordKeeper
+		var (
+			keeper provider.RecordKeeper
+			err    error
+		)
 		switch domainCfg.Provider {
 		case "cloudflare":
 			client, ok := cfAPIClientByName[domainCfg.Account]
 			if !ok {
 				return fmt.Errorf("domain %q has unknown account: %q", domainCfg.Domain, domainCfg.Account)
 			}
-			keeper = cloudflare.NewKeeper(domainCfg.Domain, client, domainCfg.Cloudflare)
+			keeper, err = cloudflare.NewKeeper(domainCfg.Domain, client, domainCfg.Cloudflare)
 		default:
 			return fmt.Errorf("domain %q has unknown provider: %q", domainCfg.Domain, domainCfg.Provider)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to create record keeper for domain %q: %w", domainCfg.Domain, err)
 		}
 
 		dm := NewDomainManager(v4ch, v6ch, keeper)

@@ -3,6 +3,7 @@ package cloudflare
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -80,12 +81,18 @@ type Keeper struct {
 }
 
 // NewKeeper creates a new [Keeper].
-func NewKeeper(domain string, client *Client, config KeeperConfig) *Keeper {
+func NewKeeper(domain string, client *Client, config KeeperConfig) (*Keeper, error) {
+	if domain == "" {
+		return nil, errors.New("domain is required")
+	}
+	if config.ZoneID == "" {
+		return nil, errors.New("zone ID is required")
+	}
 	return &Keeper{
 		domain: domain,
 		client: client,
 		config: config,
-	}
+	}, nil
 }
 
 var _ provider.RecordKeeper = (*Keeper)(nil)

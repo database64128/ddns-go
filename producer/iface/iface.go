@@ -3,6 +3,7 @@ package iface
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -78,6 +79,10 @@ type ProducerConfig struct {
 
 // NewProducer creates a new [producer.Producer] that monitors the first IPv4 and IPv6 addresses of a network interface.
 func (cfg *ProducerConfig) NewProducer() (producer.Producer, error) {
+	if cfg.Interface == "" {
+		return nil, errors.New("interface name is required")
+	}
+
 	source := NewSource(cfg.Interface)
 
 	broadcaster := broadcaster.New()
