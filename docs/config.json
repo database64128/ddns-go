@@ -36,6 +36,21 @@
                 "interface": "enp3s0",
                 "poll_interval": "90s"
             }
+        },
+        {
+            "name": "en0",
+            "type": "bsdroute",
+            "bsdroute": {
+                "interface": "en0",
+                "poll_interval": "90s"
+            }
+        },
+        {
+            "name": "Ethernet",
+            "type": "win32iphlp",
+            "win32iphlp": {
+                "interface": "Ethernet"
+            }
         }
     ],
     "accounts": [
