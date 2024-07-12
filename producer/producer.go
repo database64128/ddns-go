@@ -15,12 +15,10 @@ type Source interface {
 	Snapshot(ctx context.Context) (Message, error)
 }
 
-// Producer extends [Source] to include subscription and lifecycle management for
+// Producer provides functionality for subscription and lifecycle management of
 // IP address change notifications. It allows clients to subscribe for updates and
 // controls the monitoring process, including starting and stopping the observation.
 type Producer interface {
-	Source
-
 	// Subscribe returns a channel for receiving updates on IP address changes.
 	// On subscription, an initial message with the current IP addresses is sent.
 	// The channel is closed when the producer stops monitoring.

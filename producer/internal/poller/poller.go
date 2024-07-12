@@ -30,8 +30,6 @@ func New(interval time.Duration, source producer.Source, broadcaster *broadcaste
 var _ producer.Producer = (*Poller)(nil)
 
 // Snapshot exposes the inner source's Snapshot method.
-//
-// Snapshot implements [producer.Source.Snapshot].
 func (p *Poller) Snapshot(ctx context.Context) (producer.Message, error) {
 	return p.source.Snapshot(ctx)
 }
