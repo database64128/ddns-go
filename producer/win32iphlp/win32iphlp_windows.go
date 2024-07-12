@@ -179,11 +179,21 @@ func (p *Producer) run(ctx context.Context, logger *slog.Logger) error {
 		return os.NewSyscallError("NotifyIpInterfaceChange", err)
 	}
 
-	logger.LogAttrs(ctx, slog.LevelInfo, "Registered for IP interface change notifications")
+	logger.LogAttrs(ctx, slog.LevelInfo, "Registered for IP interface change notifications",
+		slog.Uint64("notificationHandle", uint64(notificationHandle)),
+	)
 
 	defer func() {
+		// Apparently, even on success, the notification handle can be NULL!
+		// I mean, WTF, Microsoft?!
+		if notificationHandle == 0 {
+			return
+		}
 		if err := iphlpapi.CancelMibChangeNotify2(notificationHandle); err != nil {
-			logger.LogAttrs(ctx, slog.LevelError, "Failed to cancel IP interface change notification", slog.Any("error", err))
+			logger.LogAttrs(ctx, slog.LevelError, "Failed to cancel IP interface change notification",
+				slog.Uint64("notificationHandle", uint64(notificationHandle)),
+				slog.Any("error", err),
+			)
 		}
 	}()
 
