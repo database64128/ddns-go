@@ -15,6 +15,7 @@ import (
 	"github.com/database64128/ddns-go/producer/bsdroute"
 	"github.com/database64128/ddns-go/producer/iface"
 	"github.com/database64128/ddns-go/producer/ipapi"
+	"github.com/database64128/ddns-go/producer/win32iphlp"
 	"github.com/database64128/ddns-go/provider"
 	"github.com/database64128/ddns-go/provider/cloudflare"
 )
@@ -156,6 +157,7 @@ type SourceConfig struct {
 	//   - "ipapi": IP address API.
 	//   - "iface": Network interface (generic).
 	//   - "bsdroute": Network interface (Darwin, DragonFly BSD, FreeBSD, NetBSD, OpenBSD).
+	//   - "win32iphlp": Network interface (Windows).
 	Type string `json:"type"`
 
 	// ASUSRouter is the producer configuration for an ASUS router source.
@@ -169,6 +171,9 @@ type SourceConfig struct {
 
 	// BSDRoute is the producer configuration for a bsdroute network interface source.
 	BSDRoute bsdroute.ProducerConfig `json:"bsdroute"`
+
+	// Win32IPHLP is the producer configuration for a win32iphlp network interface source.
+	Win32IPHLP win32iphlp.ProducerConfig `json:"win32iphlp"`
 }
 
 // NewProducer creates a new [producer.Producer] from the configuration.
@@ -182,6 +187,8 @@ func (cfg *SourceConfig) NewProducer(client *http.Client) (producer.Producer, er
 		return cfg.Iface.NewProducer()
 	case "bsdroute":
 		return cfg.BSDRoute.NewProducer()
+	case "win32iphlp":
+		return cfg.Win32IPHLP.NewProducer()
 	default:
 		return nil, fmt.Errorf("unknown source type: %q", cfg.Type)
 	}
