@@ -128,7 +128,9 @@ func (cfg *ProducerConfig) newProducer() (*Producer, error) {
 	}
 	return &Producer{
 		producer: producer{
-			notifyCh: make(chan mibNotification),
+			// It's been observed that NotifyIpInterfaceChange sends 2 initial notifications and
+			// blocks until the callback calls return. Be safe here and give it 2 extra slots.
+			notifyCh: make(chan mibNotification, 4),
 			source: source{
 				name: cfg.Interface,
 			},
@@ -177,6 +179,8 @@ func (p *Producer) run(ctx context.Context, logger *slog.Logger) error {
 		return os.NewSyscallError("NotifyIpInterfaceChange", err)
 	}
 
+	logger.LogAttrs(ctx, slog.LevelInfo, "Registered for IP interface change notifications")
+
 	defer func() {
 		if err := iphlpapi.CancelMibChangeNotify2(notificationHandle); err != nil {
 			logger.LogAttrs(ctx, slog.LevelError, "Failed to cancel IP interface change notification", slog.Any("error", err))
@@ -206,6 +210,23 @@ func (p *Producer) run(ctx context.Context, logger *slog.Logger) error {
 
 			case iphlpapi.MibDeleteInstance:
 				continue
+
+			case iphlpapi.MibInitialNotification:
+				// Drop the 2nd initial notification.
+				select {
+				case nmsg := <-p.notifyCh:
+					logger.LogAttrs(ctx, slog.LevelDebug, "Dropped 2nd initial IP interface change notification",
+						slog.Uint64("type", uint64(nmsg.notificationType)),
+						slog.Uint64("luid", nmsg.luid),
+					)
+				default:
+				}
+
+			default:
+				logger.LogAttrs(ctx, slog.LevelWarn, "Unknown IP interface change notification type",
+					slog.Uint64("type", uint64(nmsg.notificationType)),
+					slog.Uint64("luid", nmsg.luid),
+				)
 			}
 
 			msg, err := p.source.snapshot()
