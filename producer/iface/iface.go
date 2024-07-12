@@ -11,7 +11,6 @@ import (
 
 	"github.com/database64128/ddns-go/internal/jsonhelper"
 	"github.com/database64128/ddns-go/producer"
-	"github.com/database64128/ddns-go/producer/internal/broadcaster"
 	"github.com/database64128/ddns-go/producer/internal/poller"
 )
 
@@ -85,12 +84,10 @@ func (cfg *ProducerConfig) NewProducer() (producer.Producer, error) {
 
 	source := NewSource(cfg.Interface)
 
-	broadcaster := broadcaster.New()
-
 	pollInterval := cfg.PollInterval.Value()
 	if pollInterval <= 0 {
 		pollInterval = 90 * time.Second
 	}
 
-	return poller.New(pollInterval, source, broadcaster), nil
+	return poller.New(pollInterval, source), nil
 }

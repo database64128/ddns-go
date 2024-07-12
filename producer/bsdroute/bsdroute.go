@@ -8,12 +8,9 @@ package bsdroute
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/database64128/ddns-go/internal/jsonhelper"
 	"github.com/database64128/ddns-go/producer"
-	"github.com/database64128/ddns-go/producer/internal/broadcaster"
-	"github.com/database64128/ddns-go/producer/internal/poller"
 )
 
 // PlatformUnsupportedError is returned when the platform is not supported by bsdroute.
@@ -35,7 +32,7 @@ var ErrPlatformUnsupported = PlatformUnsupportedError{}
 //
 // Source implements [producer.Source].
 type Source struct {
-	name string
+	source
 }
 
 // NewSource creates a new [Source].
@@ -64,21 +61,5 @@ type ProducerConfig struct {
 
 // NewProducer creates a new [producer.Producer] that monitors the IP addresses of a network interface.
 func (cfg *ProducerConfig) NewProducer() (producer.Producer, error) {
-	if cfg.Interface == "" {
-		return nil, errors.New("interface name is required")
-	}
-
-	source, err := NewSource(cfg.Interface)
-	if err != nil {
-		return nil, err
-	}
-
-	broadcaster := broadcaster.New()
-
-	pollInterval := cfg.PollInterval.Value()
-	if pollInterval <= 0 {
-		pollInterval = 90 * time.Second
-	}
-
-	return poller.New(pollInterval, source, broadcaster), nil
+	return cfg.newProducer()
 }

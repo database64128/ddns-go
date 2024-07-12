@@ -11,7 +11,7 @@ import (
 
 // Poller polls the source periodically and broadcasts the received IP address message to subscribers.
 //
-// Poller implements [producer.Producer].
+// Poller implements [producer.Source] and [producer.Producer].
 type Poller struct {
 	interval    time.Duration
 	source      producer.Source
@@ -19,22 +19,24 @@ type Poller struct {
 }
 
 // New creates a new [Poller].
-func New(interval time.Duration, source producer.Source, broadcaster *broadcaster.Broadcaster) *Poller {
+func New(interval time.Duration, source producer.Source) *Poller {
 	return &Poller{
 		interval:    interval,
 		source:      source,
-		broadcaster: broadcaster,
+		broadcaster: broadcaster.New(),
 	}
 }
 
 var _ producer.Producer = (*Poller)(nil)
 
 // Snapshot exposes the inner source's Snapshot method.
+//
+// Snapshot implements [producer.Source.Snapshot].
 func (p *Poller) Snapshot(ctx context.Context) (producer.Message, error) {
 	return p.source.Snapshot(ctx)
 }
 
-// Subscribe exposes the inner broadcaster's Subscribe method.
+// Subscribe returns a channel for receiving updates on IP address changes.
 //
 // Subscribe implements [producer.Producer.Subscribe].
 func (p *Poller) Subscribe() <-chan producer.Message {

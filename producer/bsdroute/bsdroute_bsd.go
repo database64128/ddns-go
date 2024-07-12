@@ -3,19 +3,26 @@
 package bsdroute
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
 	"syscall"
+	"time"
 
 	"github.com/database64128/ddns-go/producer"
+	"github.com/database64128/ddns-go/producer/internal/poller"
 	"golang.org/x/net/route"
 )
 
-func newSource(name string) (*Source, error) {
-	return &Source{name: name}, nil
+type source struct {
+	name string
 }
 
-func (s *Source) snapshot() (producer.Message, error) {
+func newSource(name string) (*Source, error) {
+	return &Source{source: source{name: name}}, nil
+}
+
+func (s *source) snapshot() (producer.Message, error) {
 	rib, err := route.FetchRIB(syscall.AF_UNSPEC, route.RIBTypeInterface, 0)
 	if err != nil {
 		return producer.Message{}, fmt.Errorf("failed to fetch RIB: %w", err)
@@ -90,4 +97,19 @@ func (s *Source) snapshot() (producer.Message, error) {
 	}
 
 	return msg, nil
+}
+
+func (cfg *ProducerConfig) newProducer() (producer.Producer, error) {
+	if cfg.Interface == "" {
+		return nil, errors.New("interface name is required")
+	}
+
+	source, _ := newSource(cfg.Interface)
+
+	pollInterval := cfg.PollInterval.Value()
+	if pollInterval <= 0 {
+		pollInterval = 90 * time.Second
+	}
+
+	return poller.New(pollInterval, source), nil
 }
