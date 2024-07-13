@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/database64128/ddns-go/internal/jsonhelper"
 	"github.com/database64128/ddns-go/producer"
 	"github.com/database64128/ddns-go/producer/asusrouter"
 	"github.com/database64128/ddns-go/producer/bsdroute"
@@ -30,6 +31,10 @@ type Config struct {
 
 	// Domains is the configuration for the managed domains.
 	Domains []DomainConfig `json:"domains"`
+
+	// StartupDelay is the amount of time to wait before starting the service.
+	// This can be useful if the service is started before the network is ready.
+	StartupDelay jsonhelper.Duration `json:"startup_delay"`
 }
 
 // NewService creates a new [Service] from the configuration.
@@ -114,7 +119,10 @@ func (cfg *Config) NewService() (*Service, error) {
 		domainManagerByDomain[domainCfg.Domain] = NewDomainManager(v4ch, v6ch, keeper)
 	}
 
+	startupDelay := max(0, cfg.StartupDelay.Value())
+
 	return &Service{
+		startupDelay:          startupDelay,
 		domainManagerByDomain: domainManagerByDomain,
 		producerByName:        producerByName,
 	}, nil
@@ -122,6 +130,7 @@ func (cfg *Config) NewService() (*Service, error) {
 
 // Service is the DDNS service.
 type Service struct {
+	startupDelay          time.Duration
 	domainManagerByDomain map[string]*DomainManager
 	producerByName        map[string]producer.Producer
 }
@@ -129,6 +138,15 @@ type Service struct {
 // Run starts the DDNS service.
 // It blocks until the provided context is canceled.
 func (s *Service) Run(ctx context.Context, logger *slog.Logger) {
+	if s.startupDelay > 0 {
+		logger.LogAttrs(ctx, slog.LevelInfo, "Waiting before starting service", slog.Duration("delay", s.startupDelay))
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(s.startupDelay):
+		}
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(len(s.domainManagerByDomain) + len(s.producerByName))
 

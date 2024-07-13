@@ -94,5 +94,6 @@
             "ipv4_source": "asuswrt",
             "ipv6_source": "ipify6"
         }
-    ]
+    ],
+    "startup_delay": "0s"
 }
