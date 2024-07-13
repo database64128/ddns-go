@@ -187,6 +187,7 @@ func (p *Producer) run(ctx context.Context, logger *slog.Logger) error {
 		// Apparently, even on success, the notification handle can be NULL!
 		// I mean, WTF, Microsoft?!
 		if notificationHandle == 0 {
+			logger.LogAttrs(ctx, slog.LevelDebug, "Skipping CancelMibChangeNotify2 because notification handle is NULL")
 			return
 		}
 		if err := iphlpapi.CancelMibChangeNotify2(notificationHandle); err != nil {
@@ -244,7 +245,11 @@ func (p *Producer) run(ctx context.Context, logger *slog.Logger) error {
 				logger.LogAttrs(ctx, slog.LevelError, "Failed to get interface IP addresses", slog.Any("error", err))
 				continue
 			}
-			logger.LogAttrs(ctx, slog.LevelInfo, "Broadcasting interface IP addresses", slog.Any("v4", msg.IPv4), slog.Any("v6", msg.IPv6))
+			logger.LogAttrs(ctx, slog.LevelInfo, "Broadcasting interface IP addresses",
+				slog.Uint64("luid", p.source.luid),
+				slog.Any("v4", msg.IPv4),
+				slog.Any("v6", msg.IPv6),
+			)
 			p.broadcaster.Broadcast(msg)
 		}
 	}
