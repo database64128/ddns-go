@@ -147,6 +147,7 @@ type mibNotification struct {
 type producer struct {
 	notifyCh    chan mibNotification
 	source      source
+	idleTimer   *time.Timer
 	broadcaster *broadcaster.Broadcaster
 }
 
@@ -255,12 +256,19 @@ func (p *Producer) run(ctx context.Context, logger *slog.Logger) error {
 	}
 }
 
+// Wait until there's no activity on watched interface for 5 seconds.
+const notifyChIdleWait = 5 * time.Second
+
 func (p *producer) waitUntilNotifyChIdle(ctx context.Context, logger *slog.Logger) {
-	// Wait until there's no activity on watched interface for 5 seconds.
-	const idleTimeout = 5 * time.Second
-	t := time.NewTimer(idleTimeout)
+	p.initOrResetIdleTimer()
+	done := ctx.Done()
 	for {
 		select {
+		case <-done:
+			if !p.idleTimer.Stop() {
+				<-p.idleTimer.C
+			}
+			return
 		case nmsg := <-p.notifyCh:
 			logger.LogAttrs(ctx, slog.LevelDebug, "Received IP interface change notification",
 				slog.Uint64("type", uint64(nmsg.notificationType)),
@@ -269,12 +277,20 @@ func (p *producer) waitUntilNotifyChIdle(ctx context.Context, logger *slog.Logge
 			if p.source.luid != 0 && p.source.luid != nmsg.luid {
 				continue
 			}
-			if !t.Stop() {
-				<-t.C
+			if !p.idleTimer.Stop() {
+				<-p.idleTimer.C
 			}
-			_ = t.Reset(idleTimeout)
-		case <-t.C:
+			_ = p.idleTimer.Reset(notifyChIdleWait)
+		case <-p.idleTimer.C:
 			return
 		}
+	}
+}
+
+func (p *producer) initOrResetIdleTimer() {
+	if p.idleTimer == nil {
+		p.idleTimer = time.NewTimer(notifyChIdleWait)
+	} else {
+		_ = p.idleTimer.Reset(notifyChIdleWait)
 	}
 }
