@@ -32,22 +32,21 @@ type Config struct {
 	Domains []DomainConfig `json:"domains"`
 }
 
-// Run runs the DDNS service with the provided configuration.
-// It blocks until the provided context is canceled.
-func (cfg *Config) Run(ctx context.Context, logger *slog.Logger) error {
+// NewService creates a new [Service] from the configuration.
+func (cfg *Config) NewService() (*Service, error) {
 	if len(cfg.Sources) == 0 {
-		return errors.New("no sources configured")
+		return nil, errors.New("no sources configured")
 	}
 
 	producerByName := make(map[string]producer.Producer, len(cfg.Sources))
 	for _, sourceCfg := range cfg.Sources {
 		if _, ok := producerByName[sourceCfg.Name]; ok {
-			return fmt.Errorf("duplicate source: %q", sourceCfg.Name)
+			return nil, fmt.Errorf("duplicate source: %q", sourceCfg.Name)
 		}
 
 		producer, err := sourceCfg.NewProducer(http.DefaultClient)
 		if err != nil {
-			return fmt.Errorf("failed to create producer %q: %w", sourceCfg.Name, err)
+			return nil, fmt.Errorf("failed to create producer %q: %w", sourceCfg.Name, err)
 		}
 		producerByName[sourceCfg.Name] = producer
 	}
@@ -57,42 +56,39 @@ func (cfg *Config) Run(ctx context.Context, logger *slog.Logger) error {
 		switch accountCfg.Type {
 		case "cloudflare":
 			if _, ok := cfAPIClientByName[accountCfg.Name]; ok {
-				return fmt.Errorf("duplicate account: %q", accountCfg.Name)
+				return nil, fmt.Errorf("duplicate account: %q", accountCfg.Name)
 			}
 			if accountCfg.BearerToken == "" {
-				return fmt.Errorf("bearer token not specified for account %q", accountCfg.Name)
+				return nil, fmt.Errorf("bearer token not specified for account %q", accountCfg.Name)
 			}
 			client := cloudflare.NewClient(http.DefaultClient, accountCfg.BearerToken)
 			cfAPIClientByName[accountCfg.Name] = client
 		default:
-			return fmt.Errorf("account %q has unknown type: %q", accountCfg.Name, accountCfg.Type)
+			return nil, fmt.Errorf("account %q has unknown type: %q", accountCfg.Name, accountCfg.Type)
 		}
 	}
 
-	var wg sync.WaitGroup
-
-	domainSet := make(map[string]struct{}, len(cfg.Domains))
+	domainManagerByDomain := make(map[string]*DomainManager, len(cfg.Domains))
 	for i, domainCfg := range cfg.Domains {
 		if domainCfg.Domain == "" {
-			return fmt.Errorf("unspecified domain at domains[%d]", i)
+			return nil, fmt.Errorf("unspecified domain at domains[%d]", i)
 		}
-		if _, ok := domainSet[domainCfg.Domain]; ok {
-			return fmt.Errorf("duplicate domain: %q", domainCfg.Domain)
+		if _, ok := domainManagerByDomain[domainCfg.Domain]; ok {
+			return nil, fmt.Errorf("duplicate domain: %q", domainCfg.Domain)
 		}
-		domainSet[domainCfg.Domain] = struct{}{}
 
 		var v4ch, v6ch <-chan producer.Message
 		if domainCfg.IPv4Source != "" {
 			producer, ok := producerByName[domainCfg.IPv4Source]
 			if !ok {
-				return fmt.Errorf("domain %q has unknown IPv4 source: %q", domainCfg.Domain, domainCfg.IPv4Source)
+				return nil, fmt.Errorf("domain %q has unknown IPv4 source: %q", domainCfg.Domain, domainCfg.IPv4Source)
 			}
 			v4ch = producer.Subscribe()
 		}
 		if domainCfg.IPv6Source != "" {
 			producer, ok := producerByName[domainCfg.IPv6Source]
 			if !ok {
-				return fmt.Errorf("domain %q has unknown IPv6 source: %q", domainCfg.Domain, domainCfg.IPv6Source)
+				return nil, fmt.Errorf("domain %q has unknown IPv6 source: %q", domainCfg.Domain, domainCfg.IPv6Source)
 			}
 			v6ch = producer.Subscribe()
 		}
@@ -105,20 +101,40 @@ func (cfg *Config) Run(ctx context.Context, logger *slog.Logger) error {
 		case "cloudflare":
 			client, ok := cfAPIClientByName[domainCfg.Account]
 			if !ok {
-				return fmt.Errorf("domain %q has unknown account: %q", domainCfg.Domain, domainCfg.Account)
+				return nil, fmt.Errorf("domain %q has unknown account: %q", domainCfg.Domain, domainCfg.Account)
 			}
 			keeper, err = cloudflare.NewKeeper(domainCfg.Domain, client, domainCfg.Cloudflare)
 		default:
-			return fmt.Errorf("domain %q has unknown provider: %q", domainCfg.Domain, domainCfg.Provider)
+			return nil, fmt.Errorf("domain %q has unknown provider: %q", domainCfg.Domain, domainCfg.Provider)
 		}
 		if err != nil {
-			return fmt.Errorf("failed to create record keeper for domain %q: %w", domainCfg.Domain, err)
+			return nil, fmt.Errorf("failed to create record keeper for domain %q: %w", domainCfg.Domain, err)
 		}
 
-		dm := NewDomainManager(v4ch, v6ch, keeper)
-		dmLogger := logger.With("domain", domainCfg.Domain)
+		domainManagerByDomain[domainCfg.Domain] = NewDomainManager(v4ch, v6ch, keeper)
+	}
+
+	return &Service{
+		domainManagerByDomain: domainManagerByDomain,
+		producerByName:        producerByName,
+	}, nil
+}
+
+// Service is the DDNS service.
+type Service struct {
+	domainManagerByDomain map[string]*DomainManager
+	producerByName        map[string]producer.Producer
+}
+
+// Run starts the DDNS service.
+// It blocks until the provided context is canceled.
+func (s *Service) Run(ctx context.Context, logger *slog.Logger) {
+	var wg sync.WaitGroup
+	wg.Add(len(s.domainManagerByDomain) + len(s.producerByName))
+
+	for domain, dm := range s.domainManagerByDomain {
+		dmLogger := logger.With("domain", domain)
 		dmLogger.LogAttrs(ctx, slog.LevelInfo, "Starting domain manager")
-		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			dm.Run(ctx, dmLogger)
@@ -126,8 +142,7 @@ func (cfg *Config) Run(ctx context.Context, logger *slog.Logger) error {
 		}()
 	}
 
-	wg.Add(len(producerByName))
-	for producerName, producer := range producerByName {
+	for producerName, producer := range s.producerByName {
 		producerLogger := logger.With("producer", producerName)
 		producerLogger.LogAttrs(ctx, slog.LevelInfo, "Starting producer")
 		go func() {
@@ -143,7 +158,6 @@ func (cfg *Config) Run(ctx context.Context, logger *slog.Logger) error {
 	logger.LogAttrs(ctx, slog.LevelInfo, "Service started")
 	wg.Wait()
 	logger.LogAttrs(ctx, slog.LevelInfo, "Service stopped")
-	return nil
 }
 
 // SourceConfig contains configuration options for a producer source.

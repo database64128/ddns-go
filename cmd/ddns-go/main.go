@@ -14,6 +14,7 @@ import (
 )
 
 var (
+	testConf   bool
 	logNoColor bool
 	logNoTime  bool
 	logLevel   slog.Level
@@ -21,6 +22,7 @@ var (
 )
 
 func init() {
+	flag.BoolVar(&testConf, "testConf", false, "Test the configuration file and exit")
 	flag.BoolVar(&logNoColor, "logNoColor", false, "Disable colors in log output")
 	flag.BoolVar(&logNoTime, "logNoTime", false, "Disable timestamps in log output")
 	flag.TextVar(&logLevel, "logLevel", slog.LevelInfo, "Log level")
@@ -61,5 +63,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	cfg.Run(ctx, logger)
+	svc, err := cfg.NewService()
+	if err != nil {
+		logger.LogAttrs(ctx, slog.LevelError, "Failed to create service",
+			slog.Any("error", err),
+		)
+		os.Exit(1)
+	}
+
+	if testConf {
+		logger.LogAttrs(ctx, slog.LevelInfo, "Configuration file is valid")
+		return
+	}
+
+	svc.Run(ctx, logger)
 }
