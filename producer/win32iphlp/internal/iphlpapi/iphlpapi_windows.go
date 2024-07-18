@@ -200,7 +200,7 @@ func NotifyIpInterfaceChange(
 		uintptr(family),
 		callback,
 		uintptr(unsafe.Pointer(callerContext)),
-		uintptr(boolToUint32(initialNotification)),
+		uintptr(boolToUint8(initialNotification)),
 		uintptr(unsafe.Pointer(notificationHandle)),
 	)
 	if ret != windows.NO_ERROR {
@@ -209,7 +209,7 @@ func NotifyIpInterfaceChange(
 	return nil
 }
 
-func boolToUint32(b bool) uint32 {
+func boolToUint8(b bool) uint8 {
 	if b {
 		return 1
 	}
