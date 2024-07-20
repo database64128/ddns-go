@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/database64128/ddns-go/internal/jsonhelper"
+	"github.com/database64128/ddns-go/jsonhelper"
 	"github.com/database64128/ddns-go/producer"
 	"github.com/database64128/ddns-go/producer/asusrouter"
 	"github.com/database64128/ddns-go/producer/bsdroute"
@@ -19,6 +19,7 @@ import (
 	"github.com/database64128/ddns-go/producer/win32iphlp"
 	"github.com/database64128/ddns-go/provider"
 	"github.com/database64128/ddns-go/provider/cloudflare"
+	"github.com/database64128/ddns-go/tslog"
 )
 
 // Config contains the configuration options for the DDNS service.
@@ -38,7 +39,7 @@ type Config struct {
 }
 
 // NewService creates a new [Service] from the configuration.
-func (cfg *Config) NewService() (*Service, error) {
+func (cfg *Config) NewService(logger *tslog.Logger) (*Service, error) {
 	if len(cfg.Sources) == 0 {
 		return nil, errors.New("no sources configured")
 	}
@@ -49,7 +50,8 @@ func (cfg *Config) NewService() (*Service, error) {
 			return nil, fmt.Errorf("duplicate source: %q", sourceCfg.Name)
 		}
 
-		producer, err := sourceCfg.NewProducer(http.DefaultClient)
+		producerLogger := logger.WithAttrs(slog.String("source", sourceCfg.Name))
+		producer, err := sourceCfg.NewProducer(http.DefaultClient, producerLogger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create producer %q: %w", sourceCfg.Name, err)
 		}
@@ -116,12 +118,14 @@ func (cfg *Config) NewService() (*Service, error) {
 			return nil, fmt.Errorf("failed to create record keeper for domain %q: %w", domainCfg.Domain, err)
 		}
 
-		domainManagerByDomain[domainCfg.Domain] = NewDomainManager(v4ch, v6ch, keeper)
+		dmLogger := logger.WithAttrs(slog.String("domain", domainCfg.Domain))
+		domainManagerByDomain[domainCfg.Domain] = NewDomainManager(v4ch, v6ch, keeper, dmLogger)
 	}
 
 	startupDelay := max(0, cfg.StartupDelay.Value())
 
 	return &Service{
+		logger:                logger,
 		startupDelay:          startupDelay,
 		domainManagerByDomain: domainManagerByDomain,
 		producerByName:        producerByName,
@@ -130,6 +134,7 @@ func (cfg *Config) NewService() (*Service, error) {
 
 // Service is the DDNS service.
 type Service struct {
+	logger                *tslog.Logger
 	startupDelay          time.Duration
 	domainManagerByDomain map[string]*DomainManager
 	producerByName        map[string]producer.Producer
@@ -137,9 +142,9 @@ type Service struct {
 
 // Run starts the DDNS service.
 // It blocks until the provided context is canceled.
-func (s *Service) Run(ctx context.Context, logger *slog.Logger) {
+func (s *Service) Run(ctx context.Context) {
 	if s.startupDelay > 0 {
-		logger.LogAttrs(ctx, slog.LevelInfo, "Waiting before starting service", slog.Duration("delay", s.startupDelay))
+		s.logger.Info("Waiting before starting service", slog.Duration("delay", s.startupDelay))
 		select {
 		case <-ctx.Done():
 			return
@@ -150,32 +155,23 @@ func (s *Service) Run(ctx context.Context, logger *slog.Logger) {
 	var wg sync.WaitGroup
 	wg.Add(len(s.domainManagerByDomain) + len(s.producerByName))
 
-	for domain, dm := range s.domainManagerByDomain {
-		dmLogger := logger.With("domain", domain)
-		dmLogger.LogAttrs(ctx, slog.LevelInfo, "Starting domain manager")
+	for _, dm := range s.domainManagerByDomain {
 		go func() {
 			defer wg.Done()
-			dm.Run(ctx, dmLogger)
-			dmLogger.LogAttrs(ctx, slog.LevelInfo, "Stopped domain manager")
+			dm.Run(ctx)
 		}()
 	}
 
-	for producerName, producer := range s.producerByName {
-		producerLogger := logger.With("producer", producerName)
-		producerLogger.LogAttrs(ctx, slog.LevelInfo, "Starting producer")
+	for _, producer := range s.producerByName {
 		go func() {
 			defer wg.Done()
-			if err := producer.Run(ctx, producerLogger); err != nil {
-				producerLogger.LogAttrs(ctx, slog.LevelError, "Producer failed", slog.Any("error", err))
-				return
-			}
-			producerLogger.LogAttrs(ctx, slog.LevelInfo, "Stopped producer")
+			producer.Run(ctx)
 		}()
 	}
 
-	logger.LogAttrs(ctx, slog.LevelInfo, "Service started")
+	s.logger.Info("Service started")
 	wg.Wait()
-	logger.LogAttrs(ctx, slog.LevelInfo, "Service stopped")
+	s.logger.Info("Service stopped")
 }
 
 // SourceConfig contains configuration options for a producer source.
@@ -209,18 +205,18 @@ type SourceConfig struct {
 }
 
 // NewProducer creates a new [producer.Producer] from the configuration.
-func (cfg *SourceConfig) NewProducer(client *http.Client) (producer.Producer, error) {
+func (cfg *SourceConfig) NewProducer(client *http.Client, logger *tslog.Logger) (producer.Producer, error) {
 	switch cfg.Type {
 	case "asusrouter":
-		return cfg.ASUSRouter.NewProducer(client)
+		return cfg.ASUSRouter.NewProducer(client, logger)
 	case "ipapi":
-		return cfg.IPAPI.NewProducer(client)
+		return cfg.IPAPI.NewProducer(client, logger)
 	case "iface":
-		return cfg.Iface.NewProducer()
+		return cfg.Iface.NewProducer(logger)
 	case "bsdroute":
-		return cfg.BSDRoute.NewProducer()
+		return cfg.BSDRoute.NewProducer(logger)
 	case "win32iphlp":
-		return cfg.Win32IPHLP.NewProducer()
+		return cfg.Win32IPHLP.NewProducer(logger)
 	default:
 		return nil, fmt.Errorf("unknown source type: %q", cfg.Type)
 	}
@@ -280,23 +276,32 @@ type DomainManager struct {
 	v4ch   <-chan producer.Message
 	v6ch   <-chan producer.Message
 	keeper provider.RecordKeeper
+	logger *tslog.Logger
 
 	state         domainManagerState
 	cachedMessage producer.Message
 }
 
 // NewDomainManager creates a new [DomainManager].
-func NewDomainManager(v4ch, v6ch <-chan producer.Message, keeper provider.RecordKeeper) *DomainManager {
+func NewDomainManager(
+	v4ch, v6ch <-chan producer.Message,
+	keeper provider.RecordKeeper,
+	logger *tslog.Logger,
+) *DomainManager {
 	return &DomainManager{
 		v4ch:   v4ch,
 		v6ch:   v6ch,
 		keeper: keeper,
+		logger: logger,
 	}
 }
 
 // Run initiates the domain manager's record management process.
 // It blocks until the provided context is canceled.
-func (m *DomainManager) Run(ctx context.Context, logger *slog.Logger) {
+func (m *DomainManager) Run(ctx context.Context) {
+	m.logger.Info("Started domain manager")
+	defer m.logger.Info("Stopped domain manager")
+
 	done := ctx.Done()
 
 	for {
@@ -321,7 +326,12 @@ func (m *DomainManager) Run(ctx context.Context, logger *slog.Logger) {
 			}
 
 			m.keeper.FeedSourceState(m.cachedMessage)
-			logger.LogAttrs(ctx, slog.LevelInfo, "Fed source state", slog.Any("v4", m.cachedMessage.IPv4), slog.Any("v6", m.cachedMessage.IPv6))
+			if m.logger.Enabled(slog.LevelInfo) {
+				m.logger.Info("Fed source state",
+					slog.Any("v4", &m.cachedMessage.IPv4),
+					slog.Any("v6", &m.cachedMessage.IPv6),
+				)
+			}
 			m.state = domainManagerStateFetching
 
 		case domainManagerStateUpdateWait:
@@ -349,15 +359,20 @@ func (m *DomainManager) Run(ctx context.Context, logger *slog.Logger) {
 			if msg == m.cachedMessage {
 				continue
 			}
-
-			m.keeper.FeedSourceState(msg)
-			logger.LogAttrs(ctx, slog.LevelInfo, "Fed source state", slog.Any("v4", msg.IPv4), slog.Any("v6", msg.IPv6))
-			m.state = domainManagerStateSyncing
 			m.cachedMessage = msg
+
+			m.keeper.FeedSourceState(m.cachedMessage)
+			if m.logger.Enabled(slog.LevelInfo) {
+				m.logger.Info("Fed source state",
+					slog.Any("v4", &m.cachedMessage.IPv4),
+					slog.Any("v6", &m.cachedMessage.IPv6),
+				)
+			}
+			m.state = domainManagerStateSyncing
 
 		case domainManagerStateFetching:
 			if err := m.keeper.FetchRecords(ctx); err != nil {
-				logger.LogAttrs(ctx, slog.LevelWarn, "Failed to fetch records", slog.Any("error", err))
+				m.logger.Warn("Failed to fetch records", tslog.Err(err))
 				select {
 				case <-done:
 					return
@@ -365,12 +380,12 @@ func (m *DomainManager) Run(ctx context.Context, logger *slog.Logger) {
 				}
 				continue
 			}
-			logger.LogAttrs(ctx, slog.LevelInfo, "Fetched records")
+			m.logger.Info("Fetched records")
 			m.state = domainManagerStateSyncing
 
 		case domainManagerStateSyncing:
 			if err := m.keeper.SyncRecords(ctx); err != nil {
-				logger.LogAttrs(ctx, slog.LevelWarn, "Failed to sync records", slog.Any("error", err))
+				m.logger.Warn("Failed to sync records", tslog.Err(err))
 				switch err {
 				case provider.ErrKeeperFeedFirst:
 					m.state = domainManagerStateUpdateWait
@@ -390,7 +405,7 @@ func (m *DomainManager) Run(ctx context.Context, logger *slog.Logger) {
 				}
 				continue
 			}
-			logger.LogAttrs(ctx, slog.LevelInfo, "Synced records")
+			m.logger.Info("Synced records")
 			m.state = domainManagerStateUpdateWait
 
 		default:

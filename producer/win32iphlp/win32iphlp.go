@@ -5,9 +5,9 @@ package win32iphlp
 import (
 	"context"
 	"errors"
-	"log/slog"
 
 	producerpkg "github.com/database64128/ddns-go/producer"
+	"github.com/database64128/ddns-go/tslog"
 )
 
 // PlatformUnsupportedError is returned when the platform is not supported by win32iphlp.
@@ -54,8 +54,8 @@ type ProducerConfig struct {
 }
 
 // NewProducer creates a new producer that monitors the IP addresses of a network interface.
-func (cfg *ProducerConfig) NewProducer() (*Producer, error) {
-	return cfg.newProducer()
+func (cfg *ProducerConfig) NewProducer(logger *tslog.Logger) (*Producer, error) {
+	return cfg.newProducer(logger)
 }
 
 // Producer monitors the IP addresses of a network interface using the Windows IP Helper API,
@@ -78,6 +78,6 @@ func (p *Producer) Subscribe() <-chan producerpkg.Message {
 // Run initiates the monitoring process for IP address changes.
 //
 // Run implements [producerpkg.Producer.Run].
-func (p *Producer) Run(ctx context.Context, logger *slog.Logger) error {
-	return p.run(ctx, logger)
+func (p *Producer) Run(ctx context.Context) {
+	p.run(ctx)
 }

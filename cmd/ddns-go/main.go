@@ -8,9 +8,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/database64128/ddns-go/internal/jsonhelper"
+	"github.com/database64128/ddns-go/jsonhelper"
 	"github.com/database64128/ddns-go/service"
-	"github.com/lmittmann/tint"
+	"github.com/database64128/ddns-go/tslog"
 )
 
 var (
@@ -38,43 +38,27 @@ func main() {
 		stop()
 	}()
 
-	var replaceAttr func(groups []string, attr slog.Attr) slog.Attr
-	if logNoTime {
-		replaceAttr = func(groups []string, attr slog.Attr) slog.Attr {
-			if len(groups) == 0 && attr.Key == slog.TimeKey {
-				return slog.Attr{}
-			}
-			return attr
-		}
-	}
-
-	logger := slog.New(tint.NewHandler(os.Stderr, &tint.Options{
-		Level:       logLevel,
-		ReplaceAttr: replaceAttr,
-		NoColor:     logNoColor,
-	}))
+	logger := tslog.New(logLevel, logNoColor, logNoTime)
 
 	var cfg service.Config
 	if err := jsonhelper.OpenAndDecodeDisallowUnknownFields(confPath, &cfg); err != nil {
-		logger.LogAttrs(ctx, slog.LevelError, "Failed to load configuration",
+		logger.Error("Failed to load configuration",
 			slog.String("path", confPath),
-			slog.Any("error", err),
+			tslog.Err(err),
 		)
 		os.Exit(1)
 	}
 
-	svc, err := cfg.NewService()
+	svc, err := cfg.NewService(logger)
 	if err != nil {
-		logger.LogAttrs(ctx, slog.LevelError, "Failed to create service",
-			slog.Any("error", err),
-		)
+		logger.Error("Failed to create service", tslog.Err(err))
 		os.Exit(1)
 	}
 
 	if testConf {
-		logger.LogAttrs(ctx, slog.LevelInfo, "Configuration file is valid")
+		logger.Info("Configuration file is valid")
 		return
 	}
 
-	svc.Run(ctx, logger)
+	svc.Run(ctx)
 }

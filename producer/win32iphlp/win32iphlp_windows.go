@@ -16,6 +16,7 @@ import (
 	producerpkg "github.com/database64128/ddns-go/producer"
 	"github.com/database64128/ddns-go/producer/internal/broadcaster"
 	"github.com/database64128/ddns-go/producer/win32iphlp/internal/iphlpapi"
+	"github.com/database64128/ddns-go/tslog"
 	"golang.org/x/sys/windows"
 )
 
@@ -122,7 +123,7 @@ func (s *source) parseAdapterAddresses(aa *windows.IpAdapterAddresses) (msg prod
 	return producerpkg.Message{}, fmt.Errorf("no such network interface: %q", s.name)
 }
 
-func (cfg *ProducerConfig) newProducer() (*Producer, error) {
+func (cfg *ProducerConfig) newProducer(logger *tslog.Logger) (*Producer, error) {
 	if cfg.Interface == "" {
 		return nil, errors.New("interface name is required")
 	}
@@ -131,6 +132,7 @@ func (cfg *ProducerConfig) newProducer() (*Producer, error) {
 			// It's been observed that NotifyIpInterfaceChange sends 2 initial notifications and
 			// blocks until the callback calls return. Be safe here and give it 2 extra slots.
 			notifyCh: make(chan mibNotification, 4),
+			logger:   logger,
 			source: source{
 				name: cfg.Interface,
 			},
@@ -146,6 +148,7 @@ type mibNotification struct {
 
 type producer struct {
 	notifyCh    chan mibNotification
+	logger      *tslog.Logger
 	source      source
 	idleTimer   *time.Timer
 	broadcaster *broadcaster.Broadcaster
@@ -167,7 +170,7 @@ var notifyIpInterfaceChangeCallback = sync.OnceValue(func() uintptr {
 	})
 })
 
-func (p *Producer) run(ctx context.Context, logger *slog.Logger) error {
+func (p *Producer) run(ctx context.Context) {
 	var notificationHandle windows.Handle
 
 	if err := iphlpapi.NotifyIpInterfaceChange(
@@ -177,38 +180,45 @@ func (p *Producer) run(ctx context.Context, logger *slog.Logger) error {
 		true,
 		&notificationHandle,
 	); err != nil {
-		return os.NewSyscallError("NotifyIpInterfaceChange", err)
+		p.logger.Error("Failed to register for IP interface change notifications",
+			tslog.Err(os.NewSyscallError("NotifyIpInterfaceChange", err)),
+		)
+		return
 	}
 
-	logger.LogAttrs(ctx, slog.LevelInfo, "Registered for IP interface change notifications",
-		slog.Uint64("notificationHandle", uint64(notificationHandle)),
+	p.logger.Info("Registered for IP interface change notifications",
+		tslog.Uint("notificationHandle", notificationHandle),
 	)
 
 	defer func() {
 		// Apparently, even on success, the notification handle can be NULL!
 		// I mean, WTF, Microsoft?!
 		if notificationHandle == 0 {
-			logger.LogAttrs(ctx, slog.LevelDebug, "Skipping CancelMibChangeNotify2 because notification handle is NULL")
+			p.logger.Debug("Skipping CancelMibChangeNotify2 because notification handle is NULL")
 			return
 		}
 		if err := iphlpapi.CancelMibChangeNotify2(notificationHandle); err != nil {
-			logger.LogAttrs(ctx, slog.LevelError, "Failed to cancel IP interface change notification",
-				slog.Uint64("notificationHandle", uint64(notificationHandle)),
-				slog.Any("error", err),
+			p.logger.Error("Failed to unregister for IP interface change notifications",
+				tslog.Uint("notificationHandle", notificationHandle),
+				tslog.Err(os.NewSyscallError("CancelMibChangeNotify2", err)),
 			)
+			return
 		}
+		p.logger.Info("Unregistered for IP interface change notifications")
 	}()
 
 	done := ctx.Done()
 	for {
 		select {
 		case <-done:
-			return nil
+			return
 		case nmsg := <-p.notifyCh:
-			logger.LogAttrs(ctx, slog.LevelDebug, "Received IP interface change notification",
-				slog.Uint64("type", uint64(nmsg.notificationType)),
-				slog.Uint64("luid", nmsg.luid),
-			)
+			if p.logger.Enabled(slog.LevelDebug) {
+				p.logger.Debug("Received IP interface change notification",
+					tslog.Uint("type", nmsg.notificationType),
+					tslog.Uint("luid", nmsg.luid),
+				)
+			}
 
 			switch nmsg.notificationType {
 			case iphlpapi.MibParameterNotification, iphlpapi.MibAddInstance:
@@ -218,7 +228,7 @@ func (p *Producer) run(ctx context.Context, logger *slog.Logger) error {
 				}
 
 				// Absorb rapid succession of notifications.
-				p.waitUntilNotifyChIdle(ctx, logger)
+				p.waitUntilNotifyChIdle(done)
 
 			case iphlpapi.MibDeleteInstance:
 				continue
@@ -227,30 +237,36 @@ func (p *Producer) run(ctx context.Context, logger *slog.Logger) error {
 				// Drop the 2nd initial notification.
 				select {
 				case nmsg := <-p.notifyCh:
-					logger.LogAttrs(ctx, slog.LevelDebug, "Dropped 2nd initial IP interface change notification",
-						slog.Uint64("type", uint64(nmsg.notificationType)),
-						slog.Uint64("luid", nmsg.luid),
-					)
+					if p.logger.Enabled(slog.LevelDebug) {
+						p.logger.Debug("Dropped 2nd initial IP interface change notification",
+							tslog.Uint("type", nmsg.notificationType),
+							tslog.Uint("luid", nmsg.luid),
+						)
+					}
 				default:
 				}
 
 			default:
-				logger.LogAttrs(ctx, slog.LevelWarn, "Unknown IP interface change notification type",
-					slog.Uint64("type", uint64(nmsg.notificationType)),
-					slog.Uint64("luid", nmsg.luid),
+				p.logger.Warn("Unknown IP interface change notification type",
+					tslog.Uint("type", nmsg.notificationType),
+					tslog.Uint("luid", nmsg.luid),
 				)
 			}
 
 			msg, err := p.source.snapshot()
 			if err != nil {
-				logger.LogAttrs(ctx, slog.LevelError, "Failed to get interface IP addresses", slog.Any("error", err))
+				p.logger.Error("Failed to get interface IP addresses", tslog.Err(err))
 				continue
 			}
-			logger.LogAttrs(ctx, slog.LevelInfo, "Broadcasting interface IP addresses",
-				slog.Uint64("luid", p.source.luid),
-				slog.Any("v4", msg.IPv4),
-				slog.Any("v6", msg.IPv6),
-			)
+
+			if p.logger.Enabled(slog.LevelInfo) {
+				p.logger.Info("Broadcasting interface IP addresses",
+					slog.Uint64("luid", p.source.luid),
+					slog.String("v4", msg.IPv4.String()),
+					slog.String("v6", msg.IPv6.String()),
+				)
+			}
+
 			p.broadcaster.Broadcast(msg)
 		}
 	}
@@ -259,9 +275,8 @@ func (p *Producer) run(ctx context.Context, logger *slog.Logger) error {
 // Wait until there's no activity on watched interface for 5 seconds.
 const notifyChIdleWait = 5 * time.Second
 
-func (p *producer) waitUntilNotifyChIdle(ctx context.Context, logger *slog.Logger) {
+func (p *producer) waitUntilNotifyChIdle(done <-chan struct{}) {
 	p.initOrResetIdleTimer()
-	done := ctx.Done()
 	for {
 		select {
 		case <-done:
@@ -270,10 +285,12 @@ func (p *producer) waitUntilNotifyChIdle(ctx context.Context, logger *slog.Logge
 			}
 			return
 		case nmsg := <-p.notifyCh:
-			logger.LogAttrs(ctx, slog.LevelDebug, "Received IP interface change notification",
-				slog.Uint64("type", uint64(nmsg.notificationType)),
-				slog.Uint64("luid", nmsg.luid),
-			)
+			if p.logger.Enabled(slog.LevelDebug) {
+				p.logger.Debug("Received IP interface change notification",
+					tslog.Uint("type", nmsg.notificationType),
+					tslog.Uint("luid", nmsg.luid),
+				)
+			}
 			if p.source.luid != 0 && p.source.luid != nmsg.luid {
 				continue
 			}

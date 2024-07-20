@@ -9,8 +9,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/database64128/ddns-go/internal/jsonhelper"
+	"github.com/database64128/ddns-go/jsonhelper"
 	"github.com/database64128/ddns-go/producer"
+	"github.com/database64128/ddns-go/tslog"
 )
 
 // PlatformUnsupportedError is returned when the platform is not supported by bsdroute.
@@ -60,6 +61,6 @@ type ProducerConfig struct {
 }
 
 // NewProducer creates a new [producer.Producer] that monitors the IP addresses of a network interface.
-func (cfg *ProducerConfig) NewProducer() (producer.Producer, error) {
-	return cfg.newProducer()
+func (cfg *ProducerConfig) NewProducer(logger *tslog.Logger) (producer.Producer, error) {
+	return cfg.newProducer(logger)
 }

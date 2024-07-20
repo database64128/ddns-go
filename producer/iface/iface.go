@@ -9,9 +9,10 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/database64128/ddns-go/internal/jsonhelper"
+	"github.com/database64128/ddns-go/jsonhelper"
 	"github.com/database64128/ddns-go/producer"
 	"github.com/database64128/ddns-go/producer/internal/poller"
+	"github.com/database64128/ddns-go/tslog"
 )
 
 // Source obtains the first IPv4 and IPv6 addresses from a network interface,
@@ -77,7 +78,7 @@ type ProducerConfig struct {
 }
 
 // NewProducer creates a new [producer.Producer] that monitors the first IPv4 and IPv6 addresses of a network interface.
-func (cfg *ProducerConfig) NewProducer() (producer.Producer, error) {
+func (cfg *ProducerConfig) NewProducer(logger *tslog.Logger) (producer.Producer, error) {
 	if cfg.Interface == "" {
 		return nil, errors.New("interface name is required")
 	}
@@ -89,5 +90,5 @@ func (cfg *ProducerConfig) NewProducer() (producer.Producer, error) {
 		pollInterval = 90 * time.Second
 	}
 
-	return poller.New(pollInterval, source), nil
+	return poller.New(pollInterval, source, logger), nil
 }

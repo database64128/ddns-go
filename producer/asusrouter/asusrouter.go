@@ -14,9 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/database64128/ddns-go/internal/jsonhelper"
+	"github.com/database64128/ddns-go/jsonhelper"
 	"github.com/database64128/ddns-go/producer"
 	"github.com/database64128/ddns-go/producer/internal/poller"
+	"github.com/database64128/ddns-go/tslog"
 )
 
 // Source obtains the WAN IPv4 address from an ASUS router.
@@ -198,7 +199,7 @@ type ProducerConfig struct {
 // NewProducer creates a new [producer.Producer] that monitors the WAN IP address of an ASUS router.
 //
 // If client is nil, [http.DefaultClient] is used.
-func (cfg *ProducerConfig) NewProducer(client *http.Client) (producer.Producer, error) {
+func (cfg *ProducerConfig) NewProducer(client *http.Client, logger *tslog.Logger) (producer.Producer, error) {
 	source, err := NewSource(client, cfg.BaseURL, cfg.Username, cfg.Password, cfg.AJAXStatusIPKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create source: %w", err)
@@ -209,5 +210,5 @@ func (cfg *ProducerConfig) NewProducer(client *http.Client) (producer.Producer, 
 		pollInterval = 5 * time.Minute
 	}
 
-	return poller.New(pollInterval, source), nil
+	return poller.New(pollInterval, source, logger), nil
 }

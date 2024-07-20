@@ -6,9 +6,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/database64128/ddns-go/internal/jsonhelper"
+	"github.com/database64128/ddns-go/jsonhelper"
 	"github.com/database64128/ddns-go/producer"
 	"github.com/database64128/ddns-go/producer/internal/poller"
+	"github.com/database64128/ddns-go/tslog"
 )
 
 // ProducerConfig contains configuration options for the IP API producer.
@@ -31,7 +32,7 @@ type ProducerConfig struct {
 // NewProducer creates a new [producer.Producer] that monitors the public IP address from an IP address API.
 //
 // If client is nil, [http.DefaultClient] is used.
-func (cfg *ProducerConfig) NewProducer(client *http.Client) (producer.Producer, error) {
+func (cfg *ProducerConfig) NewProducer(client *http.Client, logger *tslog.Logger) (producer.Producer, error) {
 	var source producer.Source
 	switch cfg.Source {
 	case "text-ipv4":
@@ -47,5 +48,5 @@ func (cfg *ProducerConfig) NewProducer(client *http.Client) (producer.Producer, 
 		pollInterval = 5 * time.Minute
 	}
 
-	return poller.New(pollInterval, source), nil
+	return poller.New(pollInterval, source, logger), nil
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/database64128/ddns-go/producer"
 	"github.com/database64128/ddns-go/producer/internal/poller"
+	"github.com/database64128/ddns-go/tslog"
 	"golang.org/x/net/route"
 )
 
@@ -99,7 +100,7 @@ func (s *source) snapshot() (producer.Message, error) {
 	return msg, nil
 }
 
-func (cfg *ProducerConfig) newProducer() (producer.Producer, error) {
+func (cfg *ProducerConfig) newProducer(logger *tslog.Logger) (producer.Producer, error) {
 	if cfg.Interface == "" {
 		return nil, errors.New("interface name is required")
 	}
@@ -111,5 +112,5 @@ func (cfg *ProducerConfig) newProducer() (producer.Producer, error) {
 		pollInterval = 90 * time.Second
 	}
 
-	return poller.New(pollInterval, source), nil
+	return poller.New(pollInterval, source, logger), nil
 }

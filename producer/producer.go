@@ -5,7 +5,6 @@ package producer
 
 import (
 	"context"
-	"log/slog"
 	"net/netip"
 )
 
@@ -26,7 +25,7 @@ type Producer interface {
 
 	// Run initiates the monitoring process for IP address changes. It blocks until
 	// the provided context is canceled or an unrecoverable error occurs.
-	Run(ctx context.Context, logger *slog.Logger) error
+	Run(ctx context.Context)
 }
 
 // Message is a snapshot of a source's current IPv4 and/or IPv6 addresses.

@@ -4,9 +4,9 @@ package win32iphlp
 
 import (
 	"context"
-	"log/slog"
 
 	producerpkg "github.com/database64128/ddns-go/producer"
+	"github.com/database64128/ddns-go/tslog"
 )
 
 type source struct{}
@@ -19,7 +19,7 @@ func (source) snapshot() (producerpkg.Message, error) {
 	return producerpkg.Message{}, ErrPlatformUnsupported
 }
 
-func (*ProducerConfig) newProducer() (*Producer, error) {
+func (*ProducerConfig) newProducer(_ *tslog.Logger) (*Producer, error) {
 	return nil, ErrPlatformUnsupported
 }
 
@@ -29,6 +29,6 @@ func (producer) subscribe() <-chan producerpkg.Message {
 	panic(ErrPlatformUnsupported)
 }
 
-func (producer) run(_ context.Context, _ *slog.Logger) error {
-	return ErrPlatformUnsupported
+func (producer) run(_ context.Context) {
+	panic(ErrPlatformUnsupported)
 }

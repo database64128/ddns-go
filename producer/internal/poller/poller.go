@@ -7,6 +7,7 @@ import (
 
 	"github.com/database64128/ddns-go/producer"
 	"github.com/database64128/ddns-go/producer/internal/broadcaster"
+	"github.com/database64128/ddns-go/tslog"
 )
 
 // Poller polls the source periodically and broadcasts the received IP address message to subscribers.
@@ -15,14 +16,18 @@ import (
 type Poller struct {
 	interval    time.Duration
 	source      producer.Source
+	logger      *tslog.Logger
 	broadcaster *broadcaster.Broadcaster
+
+	cachedMessage producer.Message
 }
 
 // New creates a new [Poller].
-func New(interval time.Duration, source producer.Source) *Poller {
+func New(interval time.Duration, source producer.Source, logger *tslog.Logger) *Poller {
 	return &Poller{
 		interval:    interval,
 		source:      source,
+		logger:      logger,
 		broadcaster: broadcaster.New(),
 	}
 }
@@ -46,29 +51,44 @@ func (p *Poller) Subscribe() <-chan producer.Message {
 // Run starts the polling process. It logs errors and stops when the context is canceled.
 //
 // Run implements [producer.Producer.Run].
-func (p *Poller) Run(ctx context.Context, logger *slog.Logger) error {
+func (p *Poller) Run(ctx context.Context) {
+	p.logger.Info("Started polling source", slog.Duration("interval", p.interval))
+	defer p.logger.Info("Stopped polling source")
+
 	done := ctx.Done()
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
 
-	p.poll(ctx, logger)
+	p.poll(ctx, false)
 
 	for {
 		select {
 		case <-done:
-			return nil
+			return
 		case <-ticker.C:
-			p.poll(ctx, logger)
+			p.poll(ctx, true)
 		}
 	}
 }
 
-func (p *Poller) poll(ctx context.Context, logger *slog.Logger) {
+func (p *Poller) poll(ctx context.Context, skipUnchanged bool) {
 	msg, err := p.source.Snapshot(ctx)
 	if err != nil {
-		logger.LogAttrs(ctx, slog.LevelWarn, "Failed to poll source", slog.Any("error", err))
+		p.logger.Warn("Failed to poll source", tslog.Err(err))
 		return
 	}
-	logger.LogAttrs(ctx, slog.LevelInfo, "Polled source", slog.Any("v4", msg.IPv4), slog.Any("v6", msg.IPv6))
+
+	if p.logger.Enabled(slog.LevelInfo) {
+		p.logger.Info("Polled source",
+			slog.String("v4", msg.IPv4.String()),
+			slog.String("v6", msg.IPv6.String()),
+		)
+	}
+
+	if skipUnchanged && msg == p.cachedMessage {
+		return
+	}
+	p.cachedMessage = msg
+
 	p.broadcaster.Broadcast(msg)
 }
