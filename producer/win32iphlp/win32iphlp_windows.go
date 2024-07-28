@@ -262,8 +262,8 @@ func (p *Producer) run(ctx context.Context) {
 			if p.logger.Enabled(slog.LevelInfo) {
 				p.logger.Info("Broadcasting interface IP addresses",
 					slog.Uint64("luid", p.source.luid),
-					slog.String("v4", msg.IPv4.String()),
-					slog.String("v6", msg.IPv6.String()),
+					tslog.Addr("v4", msg.IPv4),
+					tslog.Addr("v6", msg.IPv6),
 				)
 			}
 

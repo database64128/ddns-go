@@ -5,8 +5,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"os"
 	"time"
+	"unsafe"
 
 	"github.com/lmittmann/tint"
 )
@@ -81,6 +83,12 @@ func (l *Logger) Log(level slog.Level, msg string, attrs ...slog.Attr) {
 	if !l.Enabled(level) {
 		return
 	}
+	l.log(level, msg, attrs...)
+}
+
+// log implements the actual logging logic, so that its callers (the exported log methods)
+// become eligible for mid-stack inlining.
+func (l *Logger) log(level slog.Level, msg string, attrs ...slog.Attr) {
 	var t time.Time
 	if !l.noTime {
 		t = time.Now()
@@ -105,4 +113,34 @@ func Int[V ~int | ~int8 | ~int16 | ~int32 | ~int64](key string, value V) slog.At
 // Uint returns a [slog.Attr] for an unsigned integer of any size.
 func Uint[V ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr](key string, value V) slog.Attr {
 	return slog.Uint64(key, uint64(value))
+}
+
+// Addr returns a [slog.Attr] for a [netip.Addr].
+func Addr(key string, addr netip.Addr) slog.Attr {
+	b, _ := addr.MarshalText()
+	s := unsafe.String(unsafe.SliceData(b), len(b))
+	return slog.String(key, s)
+}
+
+// AddrPort returns a [slog.Attr] for a [netip.AddrPort].
+func AddrPort(key string, addrPort netip.AddrPort) slog.Attr {
+	b, _ := addrPort.MarshalText()
+	s := unsafe.String(unsafe.SliceData(b), len(b))
+	return slog.String(key, s)
+}
+
+// Addrp returns a [slog.Attr] for a [*netip.Addr].
+//
+// Use [Addr] if the address is not already on the heap,
+// or the call is guarded by [Logger.Enabled].
+func Addrp(key string, addrp *netip.Addr) slog.Attr {
+	return slog.Any(key, addrp)
+}
+
+// AddrPortp returns a [slog.Attr] for a [*netip.AddrPort].
+//
+// Use [AddrPort] if the address is not already on the heap,
+// or the call is guarded by [Logger.Enabled].
+func AddrPortp(key string, addrPortp *netip.AddrPort) slog.Attr {
+	return slog.Any(key, addrPortp)
 }

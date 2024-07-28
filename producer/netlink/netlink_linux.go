@@ -174,8 +174,8 @@ func (p *producer) readAndHandle(rc *rtnetlink.RConn, ruleAddrUpdateCh chan<- ad
 		if p.logger.Enabled(slog.LevelInfo) {
 			p.logger.Info("Broadcasting interface IP addresses",
 				tslog.Uint("ifindex", p.ifindex),
-				slog.String("v4", p.addr4.String()),
-				slog.String("v6", p.addr6.String()),
+				tslog.Addr("v4", p.addr4),
+				tslog.Addr("v6", p.addr6),
 			)
 		}
 
@@ -338,7 +338,7 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 						tslog.Uint("ifa_flags", ifam.Flags),
 						tslog.Uint("ifa_scope", ifam.Scope),
 						tslog.Uint("ifa_index", ifam.Index),
-						slog.String("addr", addr.String()),
+						tslog.Addr("addr", addr),
 						slog.String("label", label),
 						tslog.Uint("ifa_prefered", cacheInfo.Prefered),
 						tslog.Uint("ifa_valid", cacheInfo.Valid),
@@ -362,7 +362,7 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 				case unix.AF_INET:
 					if !addr.Is4() {
 						p.logger.Error("Invalid IPv4 address",
-							slog.String("addr", addr.String()),
+							tslog.Addr("addr", addr),
 						)
 						break
 					}
@@ -373,7 +373,7 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 						case p.addr4 == addr:
 							if p.logger.Enabled(slog.LevelDebug) {
 								p.logger.Debug("Updating cached IPv4 address valid time",
-									slog.String("addr", addr.String()),
+									tslog.Addr("addr", addr),
 									tslog.Uint("oldValid", p.addr4valid),
 									tslog.Uint("newValid", cacheInfo.Valid),
 								)
@@ -383,9 +383,9 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 						case p.addr4valid < cacheInfo.Valid:
 							if p.logger.Enabled(slog.LevelDebug) {
 								p.logger.Debug("Updating cached IPv4 address",
-									slog.String("oldAddr", p.addr4.String()),
+									tslog.Addr("oldAddr", p.addr4),
 									tslog.Uint("oldValid", p.addr4valid),
-									slog.String("newAddr", addr.String()),
+									tslog.Addr("newAddr", addr),
 									tslog.Uint("newValid", cacheInfo.Valid),
 								)
 							}
@@ -398,7 +398,7 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 						if p.addr4 == addr {
 							if p.logger.Enabled(slog.LevelDebug) {
 								p.logger.Debug("Removing cached IPv4 address",
-									slog.String("addr", addr.String()),
+									tslog.Addr("addr", addr),
 									tslog.Uint("valid", cacheInfo.Valid),
 								)
 							}
@@ -411,7 +411,7 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 				case unix.AF_INET6:
 					if !addr.Is6() {
 						p.logger.Error("Invalid IPv6 address",
-							slog.String("addr", addr.String()),
+							tslog.Addr("addr", addr),
 						)
 						break
 					}
@@ -422,7 +422,7 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 						case p.addr6 == addr:
 							if p.logger.Enabled(slog.LevelDebug) {
 								p.logger.Debug("Updating cached IPv6 address valid time",
-									slog.String("addr", addr.String()),
+									tslog.Addr("addr", addr),
 									tslog.Uint("oldValid", p.addr6valid),
 									tslog.Uint("newValid", cacheInfo.Valid),
 								)
@@ -432,9 +432,9 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 						case p.addr6valid < cacheInfo.Valid:
 							if p.logger.Enabled(slog.LevelDebug) {
 								p.logger.Debug("Updating cached IPv6 address",
-									slog.String("oldAddr", p.addr6.String()),
+									tslog.Addr("oldAddr", p.addr6),
 									tslog.Uint("oldValid", p.addr6valid),
-									slog.String("newAddr", addr.String()),
+									tslog.Addr("newAddr", addr),
 									tslog.Uint("newValid", cacheInfo.Valid),
 								)
 							}
@@ -447,7 +447,7 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 						if p.addr6 == addr {
 							if p.logger.Enabled(slog.LevelDebug) {
 								p.logger.Debug("Removing cached IPv6 address",
-									slog.String("addr", addr.String()),
+									tslog.Addr("addr", addr),
 									tslog.Uint("valid", cacheInfo.Valid),
 								)
 							}
@@ -667,7 +667,7 @@ func (p *producer) handleRuleUpdates(done <-chan struct{}, ruleAddrUpdateCh <-ch
 			// Delete the old rule if it exists.
 			if err := p.delRuleIfAddrValid(done, fromAddr4, wc, msg, b); err != nil {
 				p.logger.Error("Failed to delete old IPv4 rule",
-					slog.String("addr", fromAddr4.String()),
+					tslog.Addr("addr", fromAddr4),
 					tslog.Err(err),
 				)
 			}
@@ -675,7 +675,7 @@ func (p *producer) handleRuleUpdates(done <-chan struct{}, ruleAddrUpdateCh <-ch
 			// Add a new rule if there's a new address.
 			if err := p.addRuleIfAddrValid(done, update.addr4, wc, msg, b); err != nil {
 				p.logger.Error("Failed to add new IPv4 rule",
-					slog.String("addr", update.addr4.String()),
+					tslog.Addr("addr", update.addr4),
 					tslog.Err(err),
 				)
 			}
@@ -687,7 +687,7 @@ func (p *producer) handleRuleUpdates(done <-chan struct{}, ruleAddrUpdateCh <-ch
 			// Delete the old rule if it exists.
 			if err := p.delRuleIfAddrValid(done, fromAddr6, wc, msg, b); err != nil {
 				p.logger.Error("Failed to delete old IPv6 rule",
-					slog.String("addr", fromAddr6.String()),
+					tslog.Addr("addr", fromAddr6),
 					tslog.Err(err),
 				)
 			}
@@ -695,7 +695,7 @@ func (p *producer) handleRuleUpdates(done <-chan struct{}, ruleAddrUpdateCh <-ch
 			// Add a new rule if there's a new address.
 			if err := p.addRuleIfAddrValid(done, update.addr6, wc, msg, b); err != nil {
 				p.logger.Error("Failed to add new IPv6 rule",
-					slog.String("addr", update.addr6.String()),
+					tslog.Addr("addr", update.addr6),
 					tslog.Err(err),
 				)
 			}
@@ -707,14 +707,14 @@ func (p *producer) handleRuleUpdates(done <-chan struct{}, ruleAddrUpdateCh <-ch
 	// Delete the rules on exit.
 	if err := p.delRuleIfAddrValid(done, fromAddr4, wc, msg, b); err != nil {
 		p.logger.Error("Failed to delete IPv4 rule on exit",
-			slog.String("addr", fromAddr4.String()),
+			tslog.Addr("addr", fromAddr4),
 			tslog.Err(err),
 		)
 	}
 
 	if err := p.delRuleIfAddrValid(done, fromAddr6, wc, msg, b); err != nil {
 		p.logger.Error("Failed to delete IPv6 rule on exit",
-			slog.String("addr", fromAddr6.String()),
+			tslog.Addr("addr", fromAddr6),
 			tslog.Err(err),
 		)
 	}

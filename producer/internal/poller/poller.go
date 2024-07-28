@@ -80,8 +80,8 @@ func (p *Poller) poll(ctx context.Context, skipUnchanged bool) {
 
 	if p.logger.Enabled(slog.LevelInfo) {
 		p.logger.Info("Polled source",
-			slog.String("v4", msg.IPv4.String()),
-			slog.String("v6", msg.IPv6.String()),
+			tslog.Addr("v4", msg.IPv4),
+			tslog.Addr("v6", msg.IPv6),
 		)
 	}
 

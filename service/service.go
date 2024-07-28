@@ -335,8 +335,8 @@ func (m *DomainManager) Run(ctx context.Context) {
 			m.keeper.FeedSourceState(m.cachedMessage)
 			if m.logger.Enabled(slog.LevelInfo) {
 				m.logger.Info("Fed source state",
-					slog.Any("v4", &m.cachedMessage.IPv4),
-					slog.Any("v6", &m.cachedMessage.IPv6),
+					tslog.Addr("v4", m.cachedMessage.IPv4),
+					tslog.Addr("v6", m.cachedMessage.IPv6),
 				)
 			}
 			m.state = domainManagerStateFetching
@@ -371,8 +371,8 @@ func (m *DomainManager) Run(ctx context.Context) {
 			m.keeper.FeedSourceState(m.cachedMessage)
 			if m.logger.Enabled(slog.LevelInfo) {
 				m.logger.Info("Fed source state",
-					slog.Any("v4", &m.cachedMessage.IPv4),
-					slog.Any("v6", &m.cachedMessage.IPv6),
+					tslog.Addr("v4", m.cachedMessage.IPv4),
+					tslog.Addr("v6", m.cachedMessage.IPv6),
 				)
 			}
 			m.state = domainManagerStateSyncing
