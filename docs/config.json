@@ -38,6 +38,14 @@
             }
         },
         {
+            "name": "enp5s0",
+            "type": "netlink",
+            "iface": {
+                "interface": "enp5s0",
+                "from_addr_lookup_main": false
+            }
+        },
+        {
             "name": "en0",
             "type": "bsdroute",
             "bsdroute": {

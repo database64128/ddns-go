@@ -16,6 +16,7 @@ import (
 	"github.com/database64128/ddns-go/producer/bsdroute"
 	"github.com/database64128/ddns-go/producer/iface"
 	"github.com/database64128/ddns-go/producer/ipapi"
+	"github.com/database64128/ddns-go/producer/netlink"
 	"github.com/database64128/ddns-go/producer/win32iphlp"
 	"github.com/database64128/ddns-go/provider"
 	"github.com/database64128/ddns-go/provider/cloudflare"
@@ -184,6 +185,7 @@ type SourceConfig struct {
 	//   - "asusrouter": ASUS router.
 	//   - "ipapi": IP address API.
 	//   - "iface": Network interface (generic).
+	//   - "netlink": Network interface (Linux).
 	//   - "bsdroute": Network interface (Darwin, DragonFly BSD, FreeBSD, NetBSD, OpenBSD).
 	//   - "win32iphlp": Network interface (Windows).
 	Type string `json:"type"`
@@ -196,6 +198,9 @@ type SourceConfig struct {
 
 	// Iface is the producer configuration for a generic network interface source.
 	Iface iface.ProducerConfig `json:"iface"`
+
+	// Netlink is the producer configuration for a netlink network interface source.
+	Netlink netlink.ProducerConfig `json:"netlink"`
 
 	// BSDRoute is the producer configuration for a bsdroute network interface source.
 	BSDRoute bsdroute.ProducerConfig `json:"bsdroute"`
@@ -213,6 +218,8 @@ func (cfg *SourceConfig) NewProducer(client *http.Client, logger *tslog.Logger) 
 		return cfg.IPAPI.NewProducer(client, logger)
 	case "iface":
 		return cfg.Iface.NewProducer(logger)
+	case "netlink":
+		return cfg.Netlink.NewProducer(logger)
 	case "bsdroute":
 		return cfg.BSDRoute.NewProducer(logger)
 	case "win32iphlp":
