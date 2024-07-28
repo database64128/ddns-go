@@ -90,7 +90,12 @@ func (s *source) parseAdapterAddresses(aa *windows.IpAdapterAddresses) (addr4, a
 				continue
 			}
 
-			// Not in the irrelevant set, compare the name.
+			// Not in the irrelevant set, check if the interface is up before comparing the name,
+			// because at this time the name might be something generic like "Local Area Connection".
+			if aa.OperStatus != windows.IfOperStatusUp {
+				continue
+			}
+
 			if s.name != windows.UTF16PtrToString(aa.FriendlyName) {
 				s.irrelevantLuidSet[aa.Luid] = struct{}{}
 				continue
@@ -246,230 +251,7 @@ func (p *producer) run(ctx context.Context) {
 				)
 			}
 
-			switch nmsg.notificationType {
-			case iphlpapi.MibParameterNotification, iphlpapi.MibAddInstance, iphlpapi.MibDeleteInstance:
-				// Skip notifications for irrelevant interfaces.
-				if p.source.luid != 0 {
-					if p.source.luid != nmsg.interfaceLuid {
-						continue
-					}
-				} else {
-					// Check if the luid is in the irrelevant set.
-					if _, ok := p.source.irrelevantLuidSet[nmsg.interfaceLuid]; ok {
-						continue
-					}
-
-					// Unknown luid, retrieve interface informaton and compare the name.
-					row := iphlpapi.MibIfRow2{
-						InterfaceLuid: nmsg.interfaceLuid,
-					}
-
-					if err := iphlpapi.GetIfEntry2Ex(
-						iphlpapi.MibIfEntryNormalWithoutStatistics,
-						&row,
-					); err != nil {
-						p.logger.Error("Failed to get interface information for IP address change notification",
-							tslog.Uint("luid", nmsg.interfaceLuid),
-							tslog.Uint("index", nmsg.interfaceIndex),
-							tslog.Uint("type", nmsg.notificationType),
-							tslog.Err(os.NewSyscallError("GetIfEntry2Ex", err)),
-						)
-						continue
-					}
-
-					if p.source.name != windows.UTF16ToString(row.Alias[:]) {
-						p.source.irrelevantLuidSet[nmsg.interfaceLuid] = struct{}{}
-						continue
-					}
-
-					if p.logger.Enabled(slog.LevelInfo) {
-						p.logger.Info("Found interface",
-							slog.String("name", p.source.name),
-							tslog.Uint("luid", nmsg.interfaceLuid),
-							tslog.Uint("index", nmsg.interfaceIndex),
-						)
-					}
-
-					p.source.luid = nmsg.interfaceLuid
-				}
-
-				var addr netip.Addr
-				switch nmsg.address.Family {
-				case windows.AF_INET:
-					rsa := (*windows.RawSockaddrInet4)(unsafe.Pointer(&nmsg.address))
-					addr = netip.AddrFrom4(rsa.Addr)
-				case windows.AF_INET6:
-					addr = netip.AddrFrom16(nmsg.address.Addr)
-				default:
-					p.logger.Error("Unknown IP address family",
-						tslog.Uint("family", nmsg.address.Family),
-						tslog.Uint("luid", nmsg.interfaceLuid),
-						tslog.Uint("index", nmsg.interfaceIndex),
-						tslog.Uint("type", nmsg.notificationType),
-					)
-					continue
-				}
-
-				// Skip link-local addresses.
-				if addr.IsLinkLocalUnicast() {
-					continue
-				}
-
-				// Skip notifications for known irrelevant addresses.
-				switch nmsg.notificationType {
-				case iphlpapi.MibParameterNotification, iphlpapi.MibDeleteInstance:
-					if addr != p.addr4 && addr != p.addr6 {
-						continue
-					}
-				}
-
-				// Retrieve full address information.
-				row := iphlpapi.MibUnicastIpAddressRow{
-					Address:        nmsg.address,
-					InterfaceLuid:  nmsg.interfaceLuid,
-					InterfaceIndex: nmsg.interfaceIndex,
-				}
-
-				if err := iphlpapi.GetUnicastIpAddressEntry(&row); err != nil {
-					p.logger.Error("Failed to get IP address information for IP address change notification",
-						tslog.Addr("addr", addr),
-						tslog.Uint("luid", nmsg.interfaceLuid),
-						tslog.Uint("index", nmsg.interfaceIndex),
-						tslog.Uint("type", nmsg.notificationType),
-						tslog.Err(os.NewSyscallError("GetUnicastIpAddressEntry", err)),
-					)
-					continue
-				}
-
-				if p.logger.Enabled(slog.LevelDebug) {
-					p.logger.Debug("Processing IP address change notification",
-						tslog.Addr("addr", addr),
-						tslog.Uint("luid", nmsg.interfaceLuid),
-						tslog.Uint("index", nmsg.interfaceIndex),
-						tslog.Uint("type", nmsg.notificationType),
-						tslog.Uint("prefixOrigin", row.PrefixOrigin),
-						tslog.Uint("suffixOrigin", row.SuffixOrigin),
-						tslog.Uint("validLifetime", row.ValidLifetime),
-						tslog.Uint("preferredLifetime", row.PreferredLifetime),
-						tslog.Uint("onLinkPrefixLength", row.OnLinkPrefixLength),
-						tslog.Uint("skipAsSource", row.SkipAsSource),
-						tslog.Uint("dadState", row.DadState),
-						tslog.Uint("scopeId", row.ScopeId),
-					)
-				}
-
-				switch nmsg.notificationType {
-				case iphlpapi.MibParameterNotification, iphlpapi.MibAddInstance:
-					switch addr {
-					case p.addr4:
-						if p.logger.Enabled(slog.LevelDebug) {
-							p.logger.Debug("Updating cached IPv4 address valid lifetime",
-								tslog.Addr("addr", addr),
-								tslog.Uint("oldValidLifetime", p.addr4ValidLifetime),
-								tslog.Uint("newValidLifetime", row.ValidLifetime),
-							)
-						}
-						p.addr4ValidLifetime = row.ValidLifetime
-
-					case p.addr6:
-						if p.logger.Enabled(slog.LevelDebug) {
-							p.logger.Debug("Updating cached IPv6 address valid lifetime",
-								tslog.Addr("addr", addr),
-								tslog.Uint("oldValidLifetime", p.addr6ValidLifetime),
-								tslog.Uint("newValidLifetime", row.ValidLifetime),
-							)
-						}
-						p.addr6ValidLifetime = row.ValidLifetime
-
-					default: // only on MibAddInstance
-						// Skip temporary and deprecated addresses.
-						if row.SuffixOrigin == iphlpapi.IpSuffixOriginRandom ||
-							row.DadState == iphlpapi.IpDadStateDeprecated {
-							continue
-						}
-
-						if addr.Is4() {
-							if row.ValidLifetime <= p.addr4ValidLifetime {
-								continue
-							}
-							if p.logger.Enabled(slog.LevelDebug) {
-								p.logger.Debug("Updating cached IPv4 address",
-									tslog.Addr("oldAddr", p.addr4),
-									tslog.Uint("oldValidLifetime", p.addr4ValidLifetime),
-									tslog.Addr("newAddr", addr),
-									tslog.Uint("newValidLifetime", row.ValidLifetime),
-								)
-							}
-							p.addr4 = addr
-							p.addr4ValidLifetime = row.ValidLifetime
-						} else {
-							if row.ValidLifetime <= p.addr6ValidLifetime {
-								continue
-							}
-							if p.logger.Enabled(slog.LevelDebug) {
-								p.logger.Debug("Updating cached IPv6 address",
-									tslog.Addr("oldAddr", p.addr6),
-									tslog.Uint("oldValidLifetime", p.addr6ValidLifetime),
-									tslog.Addr("newAddr", addr),
-									tslog.Uint("newValidLifetime", row.ValidLifetime),
-								)
-							}
-							p.addr6 = addr
-							p.addr6ValidLifetime = row.ValidLifetime
-						}
-					}
-
-				case iphlpapi.MibDeleteInstance:
-					switch addr {
-					case p.addr4:
-						if p.logger.Enabled(slog.LevelDebug) {
-							p.logger.Debug("Deleting cached IPv4 address",
-								tslog.Addr("addr", addr),
-								tslog.Uint("validLifetime", row.ValidLifetime),
-							)
-						}
-						p.addr4 = netip.Addr{}
-						p.addr4ValidLifetime = 0
-
-					case p.addr6:
-						if p.logger.Enabled(slog.LevelDebug) {
-							p.logger.Debug("Deleting cached IPv6 address",
-								tslog.Addr("addr", addr),
-								tslog.Uint("validLifetime", row.ValidLifetime),
-							)
-						}
-						p.addr6 = netip.Addr{}
-						p.addr6ValidLifetime = 0
-					}
-				}
-
-			case iphlpapi.MibInitialNotification:
-				// Drop the 2nd initial notification.
-				select {
-				case nmsg := <-p.notifyCh:
-					if p.logger.Enabled(slog.LevelDebug) {
-						p.logger.Debug("Dropped 2nd initial IP address change notification",
-							tslog.Uint("luid", nmsg.interfaceLuid),
-							tslog.Uint("index", nmsg.interfaceIndex),
-							tslog.Uint("type", nmsg.notificationType),
-						)
-					}
-				default:
-				}
-
-				var err error
-				p.addr4, p.addr6, p.addr4ValidLifetime, p.addr6ValidLifetime, err = p.source.getAdaptersAddresses()
-				if err != nil {
-					p.logger.Error("Failed to get interface IP addresses", tslog.Err(err))
-					continue
-				}
-
-			default:
-				p.logger.Warn("Unknown IP address change notification type",
-					tslog.Uint("luid", nmsg.interfaceLuid),
-					tslog.Uint("index", nmsg.interfaceIndex),
-					tslog.Uint("type", nmsg.notificationType),
-				)
+			if updated := p.handleMibNotification(nmsg); !updated {
 				continue
 			}
 
@@ -486,5 +268,287 @@ func (p *producer) run(ctx context.Context) {
 				IPv6: p.addr6,
 			})
 		}
+	}
+}
+
+func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
+	switch nmsg.notificationType {
+	case iphlpapi.MibParameterNotification, iphlpapi.MibAddInstance, iphlpapi.MibDeleteInstance:
+		// Skip notifications for irrelevant interfaces.
+		if p.source.luid != 0 {
+			if p.source.luid != nmsg.interfaceLuid {
+				if p.logger.Enabled(slog.LevelDebug) {
+					p.logger.Debug("Skipping IP address change notification for different luid",
+						tslog.Uint("luid", nmsg.interfaceLuid),
+						tslog.Uint("index", nmsg.interfaceIndex),
+						tslog.Uint("type", nmsg.notificationType),
+					)
+				}
+				return false
+			}
+		} else {
+			// Check if the luid is in the irrelevant set.
+			if _, ok := p.source.irrelevantLuidSet[nmsg.interfaceLuid]; ok {
+				if p.logger.Enabled(slog.LevelDebug) {
+					p.logger.Debug("Skipping IP address change notification for irrelevant luid",
+						tslog.Uint("luid", nmsg.interfaceLuid),
+						tslog.Uint("index", nmsg.interfaceIndex),
+						tslog.Uint("type", nmsg.notificationType),
+					)
+				}
+				return false
+			}
+
+			// Unknown luid, retrieve interface informaton and compare the name.
+			row := iphlpapi.MibIfRow2{
+				InterfaceLuid: nmsg.interfaceLuid,
+			}
+
+			if err := iphlpapi.GetIfEntry2Ex(
+				iphlpapi.MibIfEntryNormalWithoutStatistics,
+				&row,
+			); err != nil {
+				p.logger.Warn("Failed to get interface information for IP address change notification",
+					tslog.Uint("luid", nmsg.interfaceLuid),
+					tslog.Uint("index", nmsg.interfaceIndex),
+					tslog.Uint("type", nmsg.notificationType),
+					tslog.Err(os.NewSyscallError("GetIfEntry2Ex", err)),
+				)
+				return false
+			}
+
+			if p.logger.Enabled(slog.LevelDebug) {
+				p.logger.Debug("Retrieved interface information for IP address change notification",
+					tslog.Uint("luid", nmsg.interfaceLuid),
+					tslog.Uint("index", nmsg.interfaceIndex),
+					tslog.Uint("type", nmsg.notificationType),
+					tslog.Uint("operStatus", row.OperStatus),
+					tslog.Uint("adminStatus", row.AdminStatus),
+					tslog.Uint("mediaConnectState", row.MediaConnectState),
+				)
+			}
+
+			// Skip name comparison if the interface is not up,
+			// because at this time the name might be something generic like "Local Area Connection".
+			if row.OperStatus != windows.IfOperStatusUp {
+				if p.logger.Enabled(slog.LevelDebug) {
+					p.logger.Debug("Skipping IP address change notification because interface is not up",
+						tslog.Uint("luid", nmsg.interfaceLuid),
+						tslog.Uint("index", nmsg.interfaceIndex),
+						tslog.Uint("type", nmsg.notificationType),
+						tslog.Uint("operStatus", row.OperStatus),
+					)
+				}
+				return false
+			}
+
+			if name := windows.UTF16ToString(row.Alias[:]); name != p.source.name {
+				if p.logger.Enabled(slog.LevelDebug) {
+					p.logger.Debug("Skipping IP address change notification for interface with different name",
+						slog.String("name", name),
+						tslog.Uint("luid", nmsg.interfaceLuid),
+						tslog.Uint("index", nmsg.interfaceIndex),
+						tslog.Uint("type", nmsg.notificationType),
+					)
+				}
+				p.source.irrelevantLuidSet[nmsg.interfaceLuid] = struct{}{}
+				return false
+			}
+
+			if p.logger.Enabled(slog.LevelInfo) {
+				p.logger.Info("Found interface",
+					slog.String("name", p.source.name),
+					tslog.Uint("luid", nmsg.interfaceLuid),
+					tslog.Uint("index", nmsg.interfaceIndex),
+				)
+			}
+
+			p.source.luid = nmsg.interfaceLuid
+		}
+
+		var addr netip.Addr
+		switch nmsg.address.Family {
+		case windows.AF_INET:
+			rsa := (*windows.RawSockaddrInet4)(unsafe.Pointer(&nmsg.address))
+			addr = netip.AddrFrom4(rsa.Addr)
+		case windows.AF_INET6:
+			addr = netip.AddrFrom16(nmsg.address.Addr)
+		default:
+			p.logger.Error("Unknown IP address family",
+				tslog.Uint("family", nmsg.address.Family),
+				tslog.Uint("luid", nmsg.interfaceLuid),
+				tslog.Uint("index", nmsg.interfaceIndex),
+				tslog.Uint("type", nmsg.notificationType),
+			)
+			return false
+		}
+
+		// Skip link-local addresses.
+		if addr.IsLinkLocalUnicast() {
+			return false
+		}
+
+		switch nmsg.notificationType {
+		case iphlpapi.MibParameterNotification:
+			if addr != p.addr4 && addr != p.addr6 {
+				return false
+			}
+
+		case iphlpapi.MibDeleteInstance:
+			switch addr {
+			case p.addr4:
+				if p.logger.Enabled(slog.LevelDebug) {
+					p.logger.Debug("Removing cached IPv4 address",
+						tslog.Addr("addr", addr),
+						tslog.Uint("validLifetime", p.addr4ValidLifetime),
+					)
+				}
+				p.addr4 = netip.Addr{}
+				p.addr4ValidLifetime = 0
+				return true
+
+			case p.addr6:
+				if p.logger.Enabled(slog.LevelDebug) {
+					p.logger.Debug("Removing cached IPv6 address",
+						tslog.Addr("addr", addr),
+						tslog.Uint("validLifetime", p.addr6ValidLifetime),
+					)
+				}
+				p.addr6 = netip.Addr{}
+				p.addr6ValidLifetime = 0
+				return true
+
+			default:
+				return false
+			}
+		}
+
+		// Retrieve full address information.
+		row := iphlpapi.MibUnicastIpAddressRow{
+			Address:        nmsg.address,
+			InterfaceLuid:  nmsg.interfaceLuid,
+			InterfaceIndex: nmsg.interfaceIndex,
+		}
+
+		if err := iphlpapi.GetUnicastIpAddressEntry(&row); err != nil {
+			p.logger.Error("Failed to get IP address information for IP address change notification",
+				tslog.Addr("addr", addr),
+				tslog.Uint("luid", nmsg.interfaceLuid),
+				tslog.Uint("index", nmsg.interfaceIndex),
+				tslog.Uint("type", nmsg.notificationType),
+				tslog.Err(os.NewSyscallError("GetUnicastIpAddressEntry", err)),
+			)
+			return false
+		}
+
+		if p.logger.Enabled(slog.LevelDebug) {
+			p.logger.Debug("Processing IP address change notification",
+				tslog.Addr("addr", addr),
+				tslog.Uint("luid", nmsg.interfaceLuid),
+				tslog.Uint("index", nmsg.interfaceIndex),
+				tslog.Uint("type", nmsg.notificationType),
+				tslog.Uint("prefixOrigin", row.PrefixOrigin),
+				tslog.Uint("suffixOrigin", row.SuffixOrigin),
+				tslog.Uint("validLifetime", row.ValidLifetime),
+				tslog.Uint("preferredLifetime", row.PreferredLifetime),
+				tslog.Uint("onLinkPrefixLength", row.OnLinkPrefixLength),
+				tslog.Uint("skipAsSource", row.SkipAsSource),
+				tslog.Uint("dadState", row.DadState),
+				tslog.Uint("scopeId", row.ScopeId),
+			)
+		}
+
+		switch addr {
+		case p.addr4:
+			if p.logger.Enabled(slog.LevelDebug) {
+				p.logger.Debug("Updating cached IPv4 address valid lifetime",
+					tslog.Addr("addr", addr),
+					tslog.Uint("oldValidLifetime", p.addr4ValidLifetime),
+					tslog.Uint("newValidLifetime", row.ValidLifetime),
+				)
+			}
+			p.addr4ValidLifetime = row.ValidLifetime
+			return false
+
+		case p.addr6:
+			if p.logger.Enabled(slog.LevelDebug) {
+				p.logger.Debug("Updating cached IPv6 address valid lifetime",
+					tslog.Addr("addr", addr),
+					tslog.Uint("oldValidLifetime", p.addr6ValidLifetime),
+					tslog.Uint("newValidLifetime", row.ValidLifetime),
+				)
+			}
+			p.addr6ValidLifetime = row.ValidLifetime
+			return false
+
+		default: // only on MibAddInstance
+			// Skip temporary and deprecated addresses.
+			if row.SuffixOrigin == iphlpapi.IpSuffixOriginRandom ||
+				row.DadState == iphlpapi.IpDadStateDeprecated {
+				return false
+			}
+
+			if addr.Is4() {
+				if row.ValidLifetime <= p.addr4ValidLifetime {
+					return false
+				}
+				if p.logger.Enabled(slog.LevelDebug) {
+					p.logger.Debug("Updating cached IPv4 address",
+						tslog.Addr("oldAddr", p.addr4),
+						tslog.Uint("oldValidLifetime", p.addr4ValidLifetime),
+						tslog.Addr("newAddr", addr),
+						tslog.Uint("newValidLifetime", row.ValidLifetime),
+					)
+				}
+				p.addr4 = addr
+				p.addr4ValidLifetime = row.ValidLifetime
+			} else {
+				if row.ValidLifetime <= p.addr6ValidLifetime {
+					return false
+				}
+				if p.logger.Enabled(slog.LevelDebug) {
+					p.logger.Debug("Updating cached IPv6 address",
+						tslog.Addr("oldAddr", p.addr6),
+						tslog.Uint("oldValidLifetime", p.addr6ValidLifetime),
+						tslog.Addr("newAddr", addr),
+						tslog.Uint("newValidLifetime", row.ValidLifetime),
+					)
+				}
+				p.addr6 = addr
+				p.addr6ValidLifetime = row.ValidLifetime
+			}
+
+			return true
+		}
+
+	case iphlpapi.MibInitialNotification:
+		// Drop the 2nd initial notification.
+		select {
+		case nmsg := <-p.notifyCh:
+			if p.logger.Enabled(slog.LevelDebug) {
+				p.logger.Debug("Dropped 2nd initial IP address change notification",
+					tslog.Uint("luid", nmsg.interfaceLuid),
+					tslog.Uint("index", nmsg.interfaceIndex),
+					tslog.Uint("type", nmsg.notificationType),
+				)
+			}
+		default:
+		}
+
+		var err error
+		p.addr4, p.addr6, p.addr4ValidLifetime, p.addr6ValidLifetime, err = p.source.getAdaptersAddresses()
+		if err != nil {
+			p.logger.Error("Failed to get interface IP addresses", tslog.Err(err))
+			return false
+		}
+		return true
+
+	default:
+		p.logger.Warn("Unknown IP address change notification type",
+			tslog.Uint("luid", nmsg.interfaceLuid),
+			tslog.Uint("index", nmsg.interfaceIndex),
+			tslog.Uint("type", nmsg.notificationType),
+		)
+		return false
 	}
 }
