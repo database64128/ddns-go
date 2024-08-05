@@ -44,12 +44,6 @@ func (s *source) snapshot() (producerpkg.Message, error) {
 }
 
 func (s *source) getAdaptersAddresses() (addr4, addr6 netip.Addr, addr4ValidLifetime, addr6ValidLifetime uint32, err error) {
-	const (
-		GAA_FLAG_SKIP_ANYCAST    = 0x2
-		GAA_FLAG_SKIP_MULTICAST  = 0x4
-		GAA_FLAG_SKIP_DNS_SERVER = 0x8
-	)
-
 	const maxTries = 3
 	size := uint32(max(15000, cap(s.buf))) // recommended initial size 15 KB
 	for range maxTries {
@@ -58,7 +52,7 @@ func (s *source) getAdaptersAddresses() (addr4, addr6 netip.Addr, addr4ValidLife
 		p := (*windows.IpAdapterAddresses)(unsafe.Pointer(unsafe.SliceData(s.buf)))
 		if err := windows.GetAdaptersAddresses(
 			windows.AF_UNSPEC,
-			GAA_FLAG_SKIP_ANYCAST|GAA_FLAG_SKIP_MULTICAST|GAA_FLAG_SKIP_DNS_SERVER,
+			windows.GAA_FLAG_SKIP_ANYCAST|windows.GAA_FLAG_SKIP_MULTICAST|windows.GAA_FLAG_SKIP_DNS_SERVER,
 			0,
 			p,
 			&size,
