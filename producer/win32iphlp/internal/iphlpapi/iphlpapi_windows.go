@@ -12,16 +12,29 @@ const (
 	IF_MAX_STRING_SIZE         = 256
 )
 
-// Enum MIB_IF_ENTRY_LEVEL from https://learn.microsoft.com/en-us/windows/win32/api/netioapi/nf-netioapi-getifentry2ex.
+/*
+MIB_IF_ENTRY_LEVEL enumeration from netioapi.h or
+https://learn.microsoft.com/en-us/windows/win32/api/netioapi/nf-netioapi-getifentry2ex.
+
+	typedef enum _MIB_IF_ENTRY_LEVEL {
+		MibIfEntryNormal = 0,
+		MibIfEntryNormalWithoutStatistics = 2
+	} MIB_IF_ENTRY_LEVEL, *PMIB_IF_ENTRY_LEVEL;
+*/
 const (
 	MibIfEntryNormal                  = 0
 	MibIfEntryNormalWithoutStatistics = 2
 )
 
 /*
-From https://learn.microsoft.com/en-us/windows/win32/api/nldef/ne-nldef-nl_prefix_origin:
+NL_PREFIX_ORIGIN enumeration from nldef.h or
+https://learn.microsoft.com/en-us/windows/win32/api/nldef/ne-nldef-nl_prefix_origin.
 
 	typedef enum {
+		//
+		// These values are from iptypes.h.
+		// They need to fit in a 4 bit field.
+		//
 		IpPrefixOriginOther = 0,
 		IpPrefixOriginManual,
 		IpPrefixOriginWellKnown,
@@ -40,15 +53,14 @@ const (
 )
 
 /*
-From https://learn.microsoft.com/en-us/windows/win32/api/nldef/ne-nldef-nl_suffix_origin:
+NL_SUFFIX_ORIGIN enumeration from nldef.h or
+https://learn.microsoft.com/en-us/windows/win32/api/nldef/ne-nldef-nl_suffix_origin.
 
 	typedef enum {
-		NlsoOther = 0,
-		NlsoManual,
-		NlsoWellKnown,
-		NlsoDhcp,
-		NlsoLinkLayerAddress,
-		NlsoRandom,
+		//
+		// These values are from in iptypes.h.
+		// They need to fit in a 4 bit field.
+		//
 		IpSuffixOriginOther = 0,
 		IpSuffixOriginManual,
 		IpSuffixOriginWellKnown,
@@ -59,12 +71,6 @@ From https://learn.microsoft.com/en-us/windows/win32/api/nldef/ne-nldef-nl_suffi
 	} NL_SUFFIX_ORIGIN;
 */
 const (
-	NlsoOther = iota
-	NlsoManual
-	NlsoWellKnown
-	NlsoDhcp
-	NlsoLinkLayerAddress
-	NlsoRandom
 	IpSuffixOriginOther = iota
 	IpSuffixOriginManual
 	IpSuffixOriginWellKnown
@@ -75,27 +81,21 @@ const (
 )
 
 /*
-From https://learn.microsoft.com/en-us/windows/win32/api/nldef/ne-nldef-nl_dad_state:
+NL_DAD_STATE enumeration from nldef.h or
+https://learn.microsoft.com/en-us/windows/win32/api/nldef/ne-nldef-nl_dad_state.
 
 	typedef enum {
-		NldsInvalid,
-		NldsTentative,
-		NldsDuplicate,
-		NldsDeprecated,
-		NldsPreferred,
-		IpDadStateInvalid = 0,
+		//
+		// These values are from in iptypes.h.
+		//
+		IpDadStateInvalid    = 0,
 		IpDadStateTentative,
 		IpDadStateDuplicate,
 		IpDadStateDeprecated,
-		IpDadStatePreferred
+		IpDadStatePreferred,
 	} NL_DAD_STATE;
 */
 const (
-	NldsInvalid = iota
-	NldsTentative
-	NldsDuplicate
-	NldsDeprecated
-	NldsPreferred
 	IpDadStateInvalid = iota
 	IpDadStateTentative
 	IpDadStateDuplicate
@@ -104,13 +104,26 @@ const (
 )
 
 /*
-From https://learn.microsoft.com/en-us/windows/win32/api/netioapi/ne-netioapi-mib_notification_type:
+MIB_NOTIFICATION_TYPE enumeration from netioapi.h or
+https://learn.microsoft.com/en-us/windows/win32/api/netioapi/ne-netioapi-mib_notification_type.
 
 	typedef enum _MIB_NOTIFICATION_TYPE {
+		//
+		// ParameterChange.
+		//
 		MibParameterNotification,
+		//
+		// Addition.
+		//
 		MibAddInstance,
+		//
+		// Deletion.
+		//
 		MibDeleteInstance,
-		MibInitialNotification
+		//
+		// Initial notification.
+		//
+		MibInitialNotification,
 	} MIB_NOTIFICATION_TYPE, *PMIB_NOTIFICATION_TYPE;
 */
 const (
