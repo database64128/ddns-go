@@ -302,7 +302,17 @@ func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
 				iphlpapi.MibIfEntryNormalWithoutStatistics,
 				&row,
 			); err != nil {
-				p.logger.Warn("Failed to get interface information for IP address change notification",
+				if err == windows.ERROR_FILE_NOT_FOUND {
+					if p.logger.Enabled(slog.LevelDebug) {
+						p.logger.Debug("Skipping IP address change notification for deleted interface",
+							tslog.Uint("luid", nmsg.interfaceLuid),
+							tslog.Uint("index", nmsg.interfaceIndex),
+							tslog.Uint("type", nmsg.notificationType),
+						)
+					}
+					return false
+				}
+				p.logger.Error("Failed to get interface information for IP address change notification",
 					tslog.Uint("luid", nmsg.interfaceLuid),
 					tslog.Uint("index", nmsg.interfaceIndex),
 					tslog.Uint("type", nmsg.notificationType),
@@ -425,6 +435,17 @@ func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
 		}
 
 		if err := iphlpapi.GetUnicastIpAddressEntry(&row); err != nil {
+			if err == windows.ERROR_FILE_NOT_FOUND || err == windows.ERROR_NOT_FOUND {
+				if p.logger.Enabled(slog.LevelDebug) {
+					p.logger.Debug("Skipping IP address change notification for deleted address",
+						tslog.Addr("addr", addr),
+						tslog.Uint("luid", nmsg.interfaceLuid),
+						tslog.Uint("index", nmsg.interfaceIndex),
+						tslog.Uint("type", nmsg.notificationType),
+					)
+				}
+				return false
+			}
 			p.logger.Error("Failed to get IP address information for IP address change notification",
 				tslog.Addr("addr", addr),
 				tslog.Uint("luid", nmsg.interfaceLuid),
