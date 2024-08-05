@@ -297,6 +297,8 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 					}
 					p.ifindex = 0
 				}
+
+				// No need to clear the cached addresses, because they will be updated by the address messages.
 			}
 
 		case unix.RTM_NEWADDR, unix.RTM_DELADDR:
@@ -348,8 +350,10 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 					)
 				}
 
-				// Skip temporary and deprecated addresses.
-				if flags&unix.IFA_F_TEMPORARY != 0 || flags&unix.IFA_F_DEPRECATED != 0 {
+				// Skip temporary addresses.
+				// Skip deprecated addresses only for RTM_NEWADDR,
+				// because addresses may become deprecated between RTM_NEWADDR and RTM_DELADDR.
+				if flags&unix.IFA_F_TEMPORARY != 0 || flags&unix.IFA_F_DEPRECATED != 0 && nlh.Type == unix.RTM_NEWADDR {
 					break
 				}
 
@@ -380,7 +384,7 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 							}
 							p.addr4valid = cacheInfo.Valid
 
-						case p.addr4valid < cacheInfo.Valid:
+						case p.addr4valid <= cacheInfo.Valid:
 							if p.logger.Enabled(slog.LevelDebug) {
 								p.logger.Debug("Updating cached IPv4 address",
 									tslog.Addr("oldAddr", p.addr4),
@@ -429,7 +433,7 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 							}
 							p.addr6valid = cacheInfo.Valid
 
-						case p.addr6valid < cacheInfo.Valid:
+						case p.addr6valid <= cacheInfo.Valid:
 							if p.logger.Enabled(slog.LevelDebug) {
 								p.logger.Debug("Updating cached IPv6 address",
 									tslog.Addr("oldAddr", p.addr6),
