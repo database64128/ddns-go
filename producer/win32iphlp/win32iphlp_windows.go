@@ -43,7 +43,7 @@ func (s *source) snapshot() (producerpkg.Message, error) {
 	}, err
 }
 
-func (s *source) getAdaptersAddresses() (addr4, addr6 netip.Addr, addr4ValidLifetime, addr6ValidLifetime uint32, err error) {
+func (s *source) getAdaptersAddresses() (addr4, addr6 netip.Addr, addr4PreferredLifetime, addr6PreferredLifetime uint32, err error) {
 	const maxTries = 3
 	size := uint32(max(15000, cap(s.buf))) // recommended initial size 15 KB
 	for range maxTries {
@@ -70,7 +70,7 @@ func (s *source) getAdaptersAddresses() (addr4, addr6 netip.Addr, addr4ValidLife
 	return netip.Addr{}, netip.Addr{}, 0, 0, errors.New("ran out of tries for GetAdaptersAddresses")
 }
 
-func (s *source) parseAdapterAddresses(aa *windows.IpAdapterAddresses) (addr4, addr6 netip.Addr, addr4ValidLifetime, addr6ValidLifetime uint32, err error) {
+func (s *source) parseAdapterAddresses(aa *windows.IpAdapterAddresses) (addr4, addr6 netip.Addr, addr4PreferredLifetime, addr6PreferredLifetime uint32, err error) {
 	for ; aa != nil; aa = aa.Next {
 		// Skip irrelevant interfaces.
 		if s.luid != 0 {
@@ -107,10 +107,10 @@ func (s *source) parseAdapterAddresses(aa *windows.IpAdapterAddresses) (addr4, a
 
 			switch ua.Address.Sockaddr.Addr.Family {
 			case windows.AF_INET:
-				if ua.ValidLifetime <= addr4ValidLifetime {
+				if ua.PreferredLifetime <= addr4PreferredLifetime {
 					continue
 				}
-				addr4ValidLifetime = ua.ValidLifetime
+				addr4PreferredLifetime = ua.PreferredLifetime
 				rsa := (*windows.RawSockaddrInet4)(unsafe.Pointer(ua.Address.Sockaddr))
 				ip := netip.AddrFrom4(rsa.Addr)
 				if ip.IsLinkLocalUnicast() {
@@ -119,10 +119,10 @@ func (s *source) parseAdapterAddresses(aa *windows.IpAdapterAddresses) (addr4, a
 				addr4 = ip
 
 			case windows.AF_INET6:
-				if ua.ValidLifetime <= addr6ValidLifetime {
+				if ua.PreferredLifetime <= addr6PreferredLifetime {
 					continue
 				}
-				addr6ValidLifetime = ua.ValidLifetime
+				addr6PreferredLifetime = ua.PreferredLifetime
 				rsa := (*windows.RawSockaddrInet6)(unsafe.Pointer(ua.Address.Sockaddr))
 				ip := netip.AddrFrom16(rsa.Addr)
 				if ip.IsLinkLocalUnicast() {
@@ -132,7 +132,7 @@ func (s *source) parseAdapterAddresses(aa *windows.IpAdapterAddresses) (addr4, a
 			}
 		}
 
-		return addr4, addr6, addr4ValidLifetime, addr6ValidLifetime, nil
+		return addr4, addr6, addr4PreferredLifetime, addr6PreferredLifetime, nil
 	}
 
 	return netip.Addr{}, netip.Addr{}, 0, 0, fmt.Errorf("no such network interface: %q", s.name)
@@ -165,14 +165,14 @@ type mibNotification struct {
 }
 
 type producer struct {
-	notifyCh           chan mibNotification
-	logger             *tslog.Logger
-	addr4              netip.Addr
-	addr6              netip.Addr
-	addr4ValidLifetime uint32
-	addr6ValidLifetime uint32
-	source             source
-	broadcaster        *broadcaster.Broadcaster
+	notifyCh               chan mibNotification
+	logger                 *tslog.Logger
+	addr4                  netip.Addr
+	addr6                  netip.Addr
+	addr4PreferredLifetime uint32
+	addr6PreferredLifetime uint32
+	source                 source
+	broadcaster            *broadcaster.Broadcaster
 }
 
 func (p *producer) subscribe() <-chan producerpkg.Message {
@@ -404,22 +404,22 @@ func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
 				if p.logger.Enabled(slog.LevelDebug) {
 					p.logger.Debug("Removing cached IPv4 address",
 						tslog.Addr("addr", addr),
-						tslog.Uint("validLifetime", p.addr4ValidLifetime),
+						tslog.Uint("preferredLifetime", p.addr4PreferredLifetime),
 					)
 				}
 				p.addr4 = netip.Addr{}
-				p.addr4ValidLifetime = 0
+				p.addr4PreferredLifetime = 0
 				return true
 
 			case p.addr6:
 				if p.logger.Enabled(slog.LevelDebug) {
 					p.logger.Debug("Removing cached IPv6 address",
 						tslog.Addr("addr", addr),
-						tslog.Uint("validLifetime", p.addr6ValidLifetime),
+						tslog.Uint("preferredLifetime", p.addr6PreferredLifetime),
 					)
 				}
 				p.addr6 = netip.Addr{}
-				p.addr6ValidLifetime = 0
+				p.addr6PreferredLifetime = 0
 				return true
 
 			default:
@@ -475,47 +475,25 @@ func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
 
 		switch addr {
 		case p.addr4:
-			if row.DadState == iphlpapi.IpDadStateDeprecated {
-				if p.logger.Enabled(slog.LevelDebug) {
-					p.logger.Debug("Deprioritizing deprecated cached IPv4 address",
-						tslog.Addr("addr", addr),
-						tslog.Uint("validLifetime", row.ValidLifetime),
-					)
-				}
-				p.addr4ValidLifetime = 0
-				return false
-			}
-
 			if p.logger.Enabled(slog.LevelDebug) {
-				p.logger.Debug("Updating cached IPv4 address valid lifetime",
+				p.logger.Debug("Updating cached IPv4 address preferred lifetime",
 					tslog.Addr("addr", addr),
-					tslog.Uint("oldValidLifetime", p.addr4ValidLifetime),
-					tslog.Uint("newValidLifetime", row.ValidLifetime),
+					tslog.Uint("oldPreferredLifetime", p.addr4PreferredLifetime),
+					tslog.Uint("newPreferredLifetime", row.PreferredLifetime),
 				)
 			}
-			p.addr4ValidLifetime = row.ValidLifetime
+			p.addr4PreferredLifetime = row.PreferredLifetime
 			return false
 
 		case p.addr6:
-			if row.DadState == iphlpapi.IpDadStateDeprecated {
-				if p.logger.Enabled(slog.LevelDebug) {
-					p.logger.Debug("Deprioritizing deprecated cached IPv6 address",
-						tslog.Addr("addr", addr),
-						tslog.Uint("validLifetime", row.ValidLifetime),
-					)
-				}
-				p.addr6ValidLifetime = 0
-				return false
-			}
-
 			if p.logger.Enabled(slog.LevelDebug) {
-				p.logger.Debug("Updating cached IPv6 address valid lifetime",
+				p.logger.Debug("Updating cached IPv6 address preferred lifetime",
 					tslog.Addr("addr", addr),
-					tslog.Uint("oldValidLifetime", p.addr6ValidLifetime),
-					tslog.Uint("newValidLifetime", row.ValidLifetime),
+					tslog.Uint("oldPreferredLifetime", p.addr6PreferredLifetime),
+					tslog.Uint("newPreferredLifetime", row.PreferredLifetime),
 				)
 			}
-			p.addr6ValidLifetime = row.ValidLifetime
+			p.addr6PreferredLifetime = row.PreferredLifetime
 			return false
 
 		default: // only on MibAddInstance
@@ -526,33 +504,33 @@ func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
 			}
 
 			if addr.Is4() {
-				if row.ValidLifetime < p.addr4ValidLifetime {
+				if row.PreferredLifetime < p.addr4PreferredLifetime {
 					return false
 				}
 				if p.logger.Enabled(slog.LevelDebug) {
 					p.logger.Debug("Updating cached IPv4 address",
 						tslog.Addr("oldAddr", p.addr4),
-						tslog.Uint("oldValidLifetime", p.addr4ValidLifetime),
+						tslog.Uint("oldPreferredLifetime", p.addr4PreferredLifetime),
 						tslog.Addr("newAddr", addr),
-						tslog.Uint("newValidLifetime", row.ValidLifetime),
+						tslog.Uint("newPreferredLifetime", row.PreferredLifetime),
 					)
 				}
 				p.addr4 = addr
-				p.addr4ValidLifetime = row.ValidLifetime
+				p.addr4PreferredLifetime = row.PreferredLifetime
 			} else {
-				if row.ValidLifetime < p.addr6ValidLifetime {
+				if row.PreferredLifetime < p.addr6PreferredLifetime {
 					return false
 				}
 				if p.logger.Enabled(slog.LevelDebug) {
 					p.logger.Debug("Updating cached IPv6 address",
 						tslog.Addr("oldAddr", p.addr6),
-						tslog.Uint("oldValidLifetime", p.addr6ValidLifetime),
+						tslog.Uint("oldPreferredLifetime", p.addr6PreferredLifetime),
 						tslog.Addr("newAddr", addr),
-						tslog.Uint("newValidLifetime", row.ValidLifetime),
+						tslog.Uint("newPreferredLifetime", row.PreferredLifetime),
 					)
 				}
 				p.addr6 = addr
-				p.addr6ValidLifetime = row.ValidLifetime
+				p.addr6PreferredLifetime = row.PreferredLifetime
 			}
 
 			return true
@@ -573,7 +551,7 @@ func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
 		}
 
 		var err error
-		p.addr4, p.addr6, p.addr4ValidLifetime, p.addr6ValidLifetime, err = p.source.getAdaptersAddresses()
+		p.addr4, p.addr6, p.addr4PreferredLifetime, p.addr6PreferredLifetime, err = p.source.getAdaptersAddresses()
 		if err != nil {
 			p.logger.Error("Failed to get interface IP addresses", tslog.Err(err))
 			return false
