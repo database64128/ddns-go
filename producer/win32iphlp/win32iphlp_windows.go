@@ -456,14 +456,13 @@ func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
 		case p.addr4:
 			if row.DadState == iphlpapi.IpDadStateDeprecated {
 				if p.logger.Enabled(slog.LevelDebug) {
-					p.logger.Debug("Removing deprecated cached IPv4 address",
+					p.logger.Debug("Deprioritizing deprecated cached IPv4 address",
 						tslog.Addr("addr", addr),
-						tslog.Uint("validLifetime", p.addr4ValidLifetime),
+						tslog.Uint("validLifetime", row.ValidLifetime),
 					)
 				}
-				p.addr4 = netip.Addr{}
 				p.addr4ValidLifetime = 0
-				return true
+				return false
 			}
 
 			if p.logger.Enabled(slog.LevelDebug) {
@@ -479,14 +478,13 @@ func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
 		case p.addr6:
 			if row.DadState == iphlpapi.IpDadStateDeprecated {
 				if p.logger.Enabled(slog.LevelDebug) {
-					p.logger.Debug("Removing deprecated cached IPv6 address",
+					p.logger.Debug("Deprioritizing deprecated cached IPv6 address",
 						tslog.Addr("addr", addr),
-						tslog.Uint("validLifetime", p.addr6ValidLifetime),
+						tslog.Uint("validLifetime", row.ValidLifetime),
 					)
 				}
-				p.addr6 = netip.Addr{}
 				p.addr6ValidLifetime = 0
-				return true
+				return false
 			}
 
 			if p.logger.Enabled(slog.LevelDebug) {
