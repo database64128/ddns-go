@@ -34,17 +34,17 @@ func (cfg *ProducerConfig) newProducer(logger *tslog.Logger) (*Producer, error) 
 }
 
 type producer struct {
-	logger             *tslog.Logger
-	broadcaster        *broadcaster.Broadcaster
-	respChBySeq        map[uint32]chan<- syscall.Errno
-	ifname             string
-	fromAddrLookupMain bool
-	seq                uint32
-	ifindex            uint32
-	addr4              netip.Addr
-	addr6              netip.Addr
-	addr4valid         uint32
-	addr6valid         uint32
+	logger                 *tslog.Logger
+	broadcaster            *broadcaster.Broadcaster
+	respChBySeq            map[uint32]chan<- syscall.Errno
+	ifname                 string
+	fromAddrLookupMain     bool
+	seq                    uint32
+	ifindex                uint32
+	addr4                  netip.Addr
+	addr6                  netip.Addr
+	addr4PreferredLifetime uint32
+	addr6PreferredLifetime uint32
 }
 
 func (p *producer) subscribe() <-chan producerpkg.Message {
@@ -376,25 +376,25 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 						switch {
 						case p.addr4 == addr:
 							if p.logger.Enabled(slog.LevelDebug) {
-								p.logger.Debug("Updating cached IPv4 address valid time",
+								p.logger.Debug("Updating cached IPv4 address preferred lifetime",
 									tslog.Addr("addr", addr),
-									tslog.Uint("oldValid", p.addr4valid),
-									tslog.Uint("newValid", cacheInfo.Valid),
+									tslog.Uint("oldPreferredLifetime", p.addr4PreferredLifetime),
+									tslog.Uint("newPreferredLifetime", cacheInfo.Prefered),
 								)
 							}
-							p.addr4valid = cacheInfo.Valid
+							p.addr4PreferredLifetime = cacheInfo.Prefered
 
-						case p.addr4valid <= cacheInfo.Valid:
+						case p.addr4PreferredLifetime <= cacheInfo.Prefered:
 							if p.logger.Enabled(slog.LevelDebug) {
 								p.logger.Debug("Updating cached IPv4 address",
 									tslog.Addr("oldAddr", p.addr4),
-									tslog.Uint("oldValid", p.addr4valid),
+									tslog.Uint("oldPreferredLifetime", p.addr4PreferredLifetime),
 									tslog.Addr("newAddr", addr),
-									tslog.Uint("newValid", cacheInfo.Valid),
+									tslog.Uint("newPreferredLifetime", cacheInfo.Prefered),
 								)
 							}
 							p.addr4 = addr
-							p.addr4valid = cacheInfo.Valid
+							p.addr4PreferredLifetime = cacheInfo.Prefered
 							addr4updated = true
 						}
 
@@ -403,11 +403,11 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 							if p.logger.Enabled(slog.LevelDebug) {
 								p.logger.Debug("Removing cached IPv4 address",
 									tslog.Addr("addr", addr),
-									tslog.Uint("valid", cacheInfo.Valid),
+									tslog.Uint("preferredLifetime", cacheInfo.Prefered),
 								)
 							}
 							p.addr4 = netip.Addr{}
-							p.addr4valid = 0
+							p.addr4PreferredLifetime = 0
 							addr4updated = true
 						}
 					}
@@ -425,25 +425,25 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 						switch {
 						case p.addr6 == addr:
 							if p.logger.Enabled(slog.LevelDebug) {
-								p.logger.Debug("Updating cached IPv6 address valid time",
+								p.logger.Debug("Updating cached IPv6 address preferred lifetime",
 									tslog.Addr("addr", addr),
-									tslog.Uint("oldValid", p.addr6valid),
-									tslog.Uint("newValid", cacheInfo.Valid),
+									tslog.Uint("oldPreferredLifetime", p.addr6PreferredLifetime),
+									tslog.Uint("newPreferredLifetime", cacheInfo.Prefered),
 								)
 							}
-							p.addr6valid = cacheInfo.Valid
+							p.addr6PreferredLifetime = cacheInfo.Prefered
 
-						case p.addr6valid <= cacheInfo.Valid:
+						case p.addr6PreferredLifetime <= cacheInfo.Prefered:
 							if p.logger.Enabled(slog.LevelDebug) {
 								p.logger.Debug("Updating cached IPv6 address",
 									tslog.Addr("oldAddr", p.addr6),
-									tslog.Uint("oldValid", p.addr6valid),
+									tslog.Uint("oldPreferredLifetime", p.addr6PreferredLifetime),
 									tslog.Addr("newAddr", addr),
-									tslog.Uint("newValid", cacheInfo.Valid),
+									tslog.Uint("newPreferredLifetime", cacheInfo.Prefered),
 								)
 							}
 							p.addr6 = addr
-							p.addr6valid = cacheInfo.Valid
+							p.addr6PreferredLifetime = cacheInfo.Prefered
 							addr6updated = true
 						}
 
@@ -452,11 +452,11 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 							if p.logger.Enabled(slog.LevelDebug) {
 								p.logger.Debug("Removing cached IPv6 address",
 									tslog.Addr("addr", addr),
-									tslog.Uint("valid", cacheInfo.Valid),
+									tslog.Uint("preferredLifetime", cacheInfo.Prefered),
 								)
 							}
 							p.addr6 = netip.Addr{}
-							p.addr6valid = 0
+							p.addr6PreferredLifetime = 0
 							addr6updated = true
 						}
 					}
