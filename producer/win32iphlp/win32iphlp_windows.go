@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"os"
+	"runtime"
 	"slices"
 	"sync"
 	"syscall"
@@ -144,10 +145,7 @@ func (cfg *ProducerConfig) newProducer(logger *tslog.Logger) (*Producer, error) 
 	}
 	return &Producer{
 		producer: producer{
-			// It's been observed that NotifyIpInterfaceChange sends 2 initial notifications and
-			// blocks until the callback calls return. Be safe here and give it 2 extra slots.
-			notifyCh: make(chan mibNotification, 4),
-			logger:   logger,
+			logger: logger,
 			source: source{
 				name:              cfg.Interface,
 				irrelevantLuidSet: make(map[uint64]struct{}),
@@ -165,14 +163,15 @@ type mibNotification struct {
 }
 
 type producer struct {
-	notifyCh               chan mibNotification
-	logger                 *tslog.Logger
-	addr4                  netip.Addr
-	addr6                  netip.Addr
-	addr4PreferredLifetime uint32
-	addr6PreferredLifetime uint32
-	source                 source
-	broadcaster            *broadcaster.Broadcaster
+	pinner                     runtime.Pinner
+	logger                     *tslog.Logger
+	initialNotificationHandled bool
+	addr4                      netip.Addr
+	addr6                      netip.Addr
+	addr4PreferredLifetime     uint32
+	addr6PreferredLifetime     uint32
+	source                     source
+	broadcaster                *broadcaster.Broadcaster
 }
 
 func (p *producer) subscribe() <-chan producerpkg.Message {
@@ -195,12 +194,19 @@ var notifyUnicastIpAddressChangeCallback = sync.OnceValue(func() uintptr {
 })
 
 func (p *producer) run(ctx context.Context) {
+	// It's been observed that NotifyUnicastIpAddressChange sends 2 initial notifications and
+	// blocks until the callback calls return. Be safe here and give it 2 extra slots.
+	notifyCh := make(chan mibNotification, 4)
+
+	p.pinner.Pin(&notifyCh)
+	defer p.pinner.Unpin()
+
 	var notificationHandle windows.Handle
 
 	if err := iphlpapi.NotifyUnicastIpAddressChange(
 		windows.AF_UNSPEC,
 		notifyUnicastIpAddressChangeCallback(),
-		unsafe.Pointer(&p.notifyCh),
+		unsafe.Pointer(&notifyCh),
 		true,
 		&notificationHandle,
 	); err != nil {
@@ -214,13 +220,20 @@ func (p *producer) run(ctx context.Context) {
 		tslog.Uint("notificationHandle", notificationHandle),
 	)
 
-	defer func() {
+	go func() {
+		// Always close notifyCh, even if we failed to unregister,
+		// because all bets are off anyways.
+		defer close(notifyCh)
+
+		<-ctx.Done()
+
 		// Apparently, even on success, the notification handle can be NULL!
 		// I mean, WTF, Microsoft?!
 		if notificationHandle == 0 {
 			p.logger.Debug("Skipping CancelMibChangeNotify2 because notification handle is NULL")
 			return
 		}
+
 		if err := iphlpapi.CancelMibChangeNotify2(notificationHandle); err != nil {
 			p.logger.Error("Failed to unregister for IP address change notifications",
 				tslog.Uint("notificationHandle", notificationHandle),
@@ -228,40 +241,37 @@ func (p *producer) run(ctx context.Context) {
 			)
 			return
 		}
+
 		p.logger.Info("Unregistered for IP address change notifications")
 	}()
 
-	done := ctx.Done()
-	for {
-		select {
-		case <-done:
-			return
-		case nmsg := <-p.notifyCh:
-			if p.logger.Enabled(slog.LevelDebug) {
-				p.logger.Debug("Received IP address change notification",
-					tslog.Uint("luid", nmsg.interfaceLuid),
-					tslog.Uint("index", nmsg.interfaceIndex),
-					tslog.Uint("type", nmsg.notificationType),
-				)
-			}
+	p.initialNotificationHandled = false
 
-			if updated := p.handleMibNotification(nmsg); !updated {
-				continue
-			}
-
-			if p.logger.Enabled(slog.LevelInfo) {
-				p.logger.Info("Broadcasting interface IP addresses",
-					slog.Uint64("luid", p.source.luid),
-					tslog.Addr("v4", p.addr4),
-					tslog.Addr("v6", p.addr6),
-				)
-			}
-
-			p.broadcaster.Broadcast(producerpkg.Message{
-				IPv4: p.addr4,
-				IPv6: p.addr6,
-			})
+	for nmsg := range notifyCh {
+		if p.logger.Enabled(slog.LevelDebug) {
+			p.logger.Debug("Received IP address change notification",
+				tslog.Uint("luid", nmsg.interfaceLuid),
+				tslog.Uint("index", nmsg.interfaceIndex),
+				tslog.Uint("type", nmsg.notificationType),
+			)
 		}
+
+		if updated := p.handleMibNotification(nmsg); !updated {
+			continue
+		}
+
+		if p.logger.Enabled(slog.LevelInfo) {
+			p.logger.Info("Broadcasting interface IP addresses",
+				slog.Uint64("luid", p.source.luid),
+				tslog.Addr("v4", p.addr4),
+				tslog.Addr("v6", p.addr6),
+			)
+		}
+
+		p.broadcaster.Broadcast(producerpkg.Message{
+			IPv4: p.addr4,
+			IPv6: p.addr6,
+		})
 	}
 }
 
@@ -537,18 +547,18 @@ func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
 		}
 
 	case iphlpapi.MibInitialNotification:
-		// Drop the 2nd initial notification.
-		select {
-		case nmsg := <-p.notifyCh:
+		// Skip subsequent initial notifications.
+		if p.initialNotificationHandled {
 			if p.logger.Enabled(slog.LevelDebug) {
-				p.logger.Debug("Dropped 2nd initial IP address change notification",
+				p.logger.Debug("Skipping subsequent initial IP address change notification",
 					tslog.Uint("luid", nmsg.interfaceLuid),
 					tslog.Uint("index", nmsg.interfaceIndex),
 					tslog.Uint("type", nmsg.notificationType),
 				)
 			}
-		default:
+			return false
 		}
+		p.initialNotificationHandled = true
 
 		var err error
 		p.addr4, p.addr6, p.addr4PreferredLifetime, p.addr6PreferredLifetime, err = p.source.getAdaptersAddresses()
