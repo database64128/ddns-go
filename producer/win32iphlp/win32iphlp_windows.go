@@ -101,8 +101,8 @@ func (s *source) parseAdapterAddresses(aa *windows.IpAdapterAddresses) (addr4, a
 
 		for ua := aa.FirstUnicastAddress; ua != nil; ua = ua.Next {
 			// Skip temporary and deprecated addresses.
-			if ua.SuffixOrigin == iphlpapi.IpSuffixOriginRandom ||
-				ua.DadState == iphlpapi.IpDadStateDeprecated {
+			if ua.SuffixOrigin == windows.IpSuffixOriginRandom ||
+				ua.DadState == windows.IpDadStateDeprecated {
 				continue
 			}
 
@@ -508,8 +508,8 @@ func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
 
 		default: // only on MibAddInstance
 			// Skip temporary and deprecated addresses.
-			if row.SuffixOrigin == iphlpapi.IpSuffixOriginRandom ||
-				row.DadState == iphlpapi.IpDadStateDeprecated {
+			if row.SuffixOrigin == windows.IpSuffixOriginRandom ||
+				row.DadState == windows.IpDadStateDeprecated {
 				return false
 			}
 
