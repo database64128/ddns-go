@@ -350,10 +350,11 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 					)
 				}
 
-				// Skip temporary addresses.
-				// Skip deprecated addresses only for RTM_NEWADDR,
-				// because addresses may become deprecated between RTM_NEWADDR and RTM_DELADDR.
-				if flags&unix.IFA_F_TEMPORARY != 0 || flags&unix.IFA_F_DEPRECATED != 0 && nlh.Type == unix.RTM_NEWADDR {
+				// Skip temporary addresses, but not deprecated ones.
+				//
+				// When an address becomes deprecated, we will receive an RTM_NEWADDR message for it.
+				// Let the message pass through, so the cached preferred lifetime can be updated.
+				if flags&unix.IFA_F_TEMPORARY != 0 {
 					break
 				}
 
