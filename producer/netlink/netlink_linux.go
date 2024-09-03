@@ -176,6 +176,8 @@ func (p *producer) readAndHandle(rc *rtnetlink.RConn, ruleAddrUpdateCh chan<- ad
 				tslog.Uint("ifindex", p.ifindex),
 				tslog.Addr("v4", p.addr4),
 				tslog.Addr("v6", p.addr6),
+				tslog.Uint("v4PreferredLifetime", p.addr4PreferredLifetime),
+				tslog.Uint("v6PreferredLifetime", p.addr6PreferredLifetime),
 			)
 		}
 
