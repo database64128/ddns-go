@@ -111,25 +111,25 @@ func (s *source) parseAdapterAddresses(aa *windows.IpAdapterAddresses) (addr4, a
 				if ua.PreferredLifetime <= addr4PreferredLifetime {
 					continue
 				}
-				addr4PreferredLifetime = ua.PreferredLifetime
 				rsa := (*windows.RawSockaddrInet4)(unsafe.Pointer(ua.Address.Sockaddr))
 				ip := netip.AddrFrom4(rsa.Addr)
 				if ip.IsLinkLocalUnicast() {
 					continue
 				}
 				addr4 = ip
+				addr4PreferredLifetime = ua.PreferredLifetime
 
 			case windows.AF_INET6:
 				if ua.PreferredLifetime <= addr6PreferredLifetime {
 					continue
 				}
-				addr6PreferredLifetime = ua.PreferredLifetime
 				rsa := (*windows.RawSockaddrInet6)(unsafe.Pointer(ua.Address.Sockaddr))
 				ip := netip.AddrFrom16(rsa.Addr)
 				if ip.IsLinkLocalUnicast() {
 					continue
 				}
 				addr6 = ip
+				addr6PreferredLifetime = ua.PreferredLifetime
 			}
 		}
 
