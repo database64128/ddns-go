@@ -15,7 +15,6 @@ import (
 
 	producerpkg "github.com/database64128/ddns-go/producer"
 	"github.com/database64128/ddns-go/producer/internal/broadcaster"
-	"github.com/database64128/ddns-go/producer/win32iphlp/internal/iphlpapi"
 	"github.com/database64128/ddns-go/tslog"
 	"golang.org/x/sys/windows"
 )
@@ -179,7 +178,7 @@ func (p *producer) subscribe() <-chan producerpkg.Message {
 }
 
 var notifyUnicastIpAddressChangeCallback = sync.OnceValue(func() uintptr {
-	return syscall.NewCallback(func(callerContext *chan<- mibNotification, row *iphlpapi.MibUnicastIpAddressRow, notificationType uint32) uintptr {
+	return syscall.NewCallback(func(callerContext *chan<- mibNotification, row *windows.MibUnicastIpAddressRow, notificationType uint32) uintptr {
 		notifyCh := *callerContext
 		var nmsg mibNotification
 		if row != nil {
@@ -203,7 +202,7 @@ func (p *producer) run(ctx context.Context) {
 
 	var notificationHandle windows.Handle
 
-	if err := iphlpapi.NotifyUnicastIpAddressChange(
+	if err := windows.NotifyUnicastIpAddressChange(
 		windows.AF_UNSPEC,
 		notifyUnicastIpAddressChangeCallback(),
 		unsafe.Pointer(&notifyCh),
@@ -234,7 +233,7 @@ func (p *producer) run(ctx context.Context) {
 			return
 		}
 
-		if err := iphlpapi.CancelMibChangeNotify2(notificationHandle); err != nil {
+		if err := windows.CancelMibChangeNotify2(notificationHandle); err != nil {
 			p.logger.Error("Failed to unregister for IP address change notifications",
 				tslog.Uint("notificationHandle", notificationHandle),
 				tslog.Err(os.NewSyscallError("CancelMibChangeNotify2", err)),
@@ -279,7 +278,7 @@ func (p *producer) run(ctx context.Context) {
 
 func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
 	switch nmsg.notificationType {
-	case iphlpapi.MibParameterNotification, iphlpapi.MibAddInstance, iphlpapi.MibDeleteInstance:
+	case windows.MibParameterNotification, windows.MibAddInstance, windows.MibDeleteInstance:
 		// Skip notifications for irrelevant interfaces.
 		if p.source.luid != 0 {
 			if p.source.luid != nmsg.interfaceLuid {
@@ -306,12 +305,12 @@ func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
 			}
 
 			// Unknown luid, retrieve interface informaton and compare the name.
-			row := iphlpapi.MibIfRow2{
+			row := windows.MibIfRow2{
 				InterfaceLuid: nmsg.interfaceLuid,
 			}
 
-			if err := iphlpapi.GetIfEntry2Ex(
-				iphlpapi.MibIfEntryNormalWithoutStatistics,
+			if err := windows.GetIfEntry2Ex(
+				windows.MibIfEntryNormalWithoutStatistics,
 				&row,
 			); err != nil {
 				if err == windows.ERROR_FILE_NOT_FOUND {
@@ -405,12 +404,12 @@ func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
 		}
 
 		switch nmsg.notificationType {
-		case iphlpapi.MibParameterNotification:
+		case windows.MibParameterNotification:
 			if addr != p.addr4 && addr != p.addr6 {
 				return false
 			}
 
-		case iphlpapi.MibDeleteInstance:
+		case windows.MibDeleteInstance:
 			switch addr {
 			case p.addr4:
 				if p.logger.Enabled(slog.LevelDebug) {
@@ -440,13 +439,13 @@ func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
 		}
 
 		// Retrieve full address information.
-		row := iphlpapi.MibUnicastIpAddressRow{
+		row := windows.MibUnicastIpAddressRow{
 			Address:        nmsg.address,
 			InterfaceLuid:  nmsg.interfaceLuid,
 			InterfaceIndex: nmsg.interfaceIndex,
 		}
 
-		if err := iphlpapi.GetUnicastIpAddressEntry(&row); err != nil {
+		if err := windows.GetUnicastIpAddressEntry(&row); err != nil {
 			if err == windows.ERROR_FILE_NOT_FOUND || err == windows.ERROR_NOT_FOUND {
 				if p.logger.Enabled(slog.LevelDebug) {
 					p.logger.Debug("Skipping IP address change notification for deleted address",
@@ -548,7 +547,7 @@ func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
 			return true
 		}
 
-	case iphlpapi.MibInitialNotification:
+	case windows.MibInitialNotification:
 		// Skip subsequent initial notifications.
 		if p.initialNotificationHandled {
 			if p.logger.Enabled(slog.LevelDebug) {
