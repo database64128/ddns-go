@@ -1,5 +1,5 @@
-github.com/lmittmann/tint v1.0.5 h1:NQclAutOfYsqs2F1Lenue6OoWCajs5wJcP3DfWVpePw=
-github.com/lmittmann/tint v1.0.5/go.mod h1:HIS3gSy7qNwGCj+5oRjAutErFBl4BzdQP6cJZ0NfMwE=
+github.com/database64128/tint v0.0.0-20241210020910-ebdf04e854de h1:6Uoug0RmZaj7hNqxZehXlhY9WOk4dJcv6NwWfcyG4pU=
+github.com/database64128/tint v0.0.0-20241210020910-ebdf04e854de/go.mod h1:vOfSDbAJ9LeQp7R2RcUd7wj55TC7ck5pRkQNqn8a5yw=
 golang.org/x/net v0.32.0 h1:ZqPmj8Kzc+Y6e0+skZsuACbx+wzMgo5MQsJh9Qd6aYI=
 golang.org/x/net v0.32.0/go.mod h1:CwU0IoeOlnQQWJ6ioyFrfRuomB8GKF6KbYXZVyeXNfs=
 golang.org/x/sys v0.28.0 h1:Fksou7UEQUWlKvIdsqzJmUmCX3cZuD2+P3XyyzwMhlA=

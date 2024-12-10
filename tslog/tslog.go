@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/lmittmann/tint"
+	"github.com/database64128/tint"
 )
 
 // Config is a set of options for a [*Logger].
