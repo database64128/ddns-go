@@ -8,7 +8,6 @@ import (
 	"net/netip"
 	"os"
 	"time"
-	"unsafe"
 
 	"github.com/lmittmann/tint"
 )
@@ -160,16 +159,24 @@ func Uint[V ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr](key string,
 }
 
 // Addr returns a [slog.Attr] for a [netip.Addr].
+//
+// If addr is the zero value, the value is the empty string.
 func Addr(key string, addr netip.Addr) slog.Attr {
-	b, _ := addr.MarshalText()
-	s := unsafe.String(unsafe.SliceData(b), len(b))
+	var s string
+	if addr.IsValid() {
+		s = addr.String()
+	}
 	return slog.String(key, s)
 }
 
 // AddrPort returns a [slog.Attr] for a [netip.AddrPort].
+//
+// If addrPort is the zero value, the value is the empty string.
 func AddrPort(key string, addrPort netip.AddrPort) slog.Attr {
-	b, _ := addrPort.MarshalText()
-	s := unsafe.String(unsafe.SliceData(b), len(b))
+	var s string
+	if addrPort.IsValid() {
+		s = addrPort.String()
+	}
 	return slog.String(key, s)
 }
 
