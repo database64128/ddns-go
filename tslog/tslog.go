@@ -13,26 +13,65 @@ import (
 	"github.com/lmittmann/tint"
 )
 
+// Config is a set of options for a [*Logger].
+type Config struct {
+	// Level is the minimum level of log messages to write.
+	Level slog.Level `json:"level"`
+
+	// NoColor disables color in log messages.
+	NoColor bool `json:"no_color"`
+
+	// NoTime disables timestamps in log messages.
+	NoTime bool `json:"no_time"`
+
+	// UseTextHandler enables the use of a [*slog.TextHandler] instead of the default tint handler.
+	UseTextHandler bool `json:"use_text_handler"`
+
+	// UseJSONHandler enables the use of a [*slog.JSONHandler] instead of the default tint handler.
+	UseJSONHandler bool `json:"use_json_handler"`
+}
+
+// NewLogger creates a new [*Logger] with the given config.
+func (c *Config) NewLogger() *Logger {
+	return &Logger{
+		level:   c.Level,
+		noTime:  c.NoTime,
+		handler: c.newHandler(),
+	}
+}
+
+func (c *Config) newHandler() slog.Handler {
+	if c.UseTextHandler {
+		return slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			Level: c.Level,
+		})
+	}
+	if c.UseJSONHandler {
+		return slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+			Level: c.Level,
+		})
+	}
+	return tint.NewHandler(os.Stderr, &tint.Options{
+		Level:   c.Level,
+		NoColor: c.NoColor,
+	})
+}
+
+// NewLoggerWithHandler creates a new [*Logger] with the given handler.
+func (c *Config) NewLoggerWithHandler(handler slog.Handler) *Logger {
+	return &Logger{
+		level:   c.Level,
+		noTime:  c.NoTime,
+		handler: handler,
+	}
+}
+
 // Logger is an opinionated logging implementation that writes structured log messages,
 // tinted with color by default, to [os.Stderr].
 type Logger struct {
 	level   slog.Level
 	noTime  bool
 	handler slog.Handler
-}
-
-// New creates a new [*Logger] with the given options.
-func New(level slog.Level, noColor, noTime bool) *Logger {
-	handler := tint.NewHandler(os.Stderr, &tint.Options{
-		Level:   level,
-		NoColor: noColor,
-	})
-	return &Logger{level, noTime, handler}
-}
-
-// NewWithHandler creates a new [*Logger] with the given handler.
-func NewWithHandler(level slog.Level, noTime bool, handler slog.Handler) *Logger {
-	return &Logger{level, noTime, handler}
 }
 
 // Handler returns the logger's handler.

@@ -20,6 +20,8 @@ var (
 	testConf   bool
 	logNoColor bool
 	logNoTime  bool
+	logKVPairs bool
+	logJSON    bool
 	logLevel   slog.Level
 	confPath   string
 )
@@ -29,6 +31,8 @@ func init() {
 	flag.BoolVar(&testConf, "testConf", false, "Test the configuration file and exit")
 	flag.BoolVar(&logNoColor, "logNoColor", false, "Disable colors in log output")
 	flag.BoolVar(&logNoTime, "logNoTime", false, "Disable timestamps in log output")
+	flag.BoolVar(&logKVPairs, "logKVPairs", false, "Use key=value pairs in log output")
+	flag.BoolVar(&logJSON, "logJSON", false, "Use JSON in log output")
 	flag.TextVar(&logLevel, "logLevel", slog.LevelInfo, "Log level")
 	flag.StringVar(&confPath, "confPath", "config.json", "Path to the configuration file")
 }
@@ -50,7 +54,14 @@ func main() {
 		stop()
 	}()
 
-	logger := tslog.New(logLevel, logNoColor, logNoTime)
+	logCfg := tslog.Config{
+		Level:          logLevel,
+		NoColor:        logNoColor,
+		NoTime:         logNoTime,
+		UseTextHandler: logKVPairs,
+		UseJSONHandler: logJSON,
+	}
+	logger := logCfg.NewLogger()
 	logger.Info("ddns-go", slog.String("version", ddnsgo.Version))
 
 	var cfg service.Config
