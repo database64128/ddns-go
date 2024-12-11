@@ -4,6 +4,7 @@ package tslog
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/netip"
 	"os"
@@ -30,27 +31,27 @@ type Config struct {
 	UseJSONHandler bool `json:"use_json_handler"`
 }
 
-// NewLogger creates a new [*Logger] with the given config.
-func (c *Config) NewLogger() *Logger {
+// NewLogger creates a new [*Logger] that writes to w.
+func (c *Config) NewLogger(w io.Writer) *Logger {
 	return &Logger{
 		level:   c.Level,
 		noTime:  c.NoTime,
-		handler: c.newHandler(),
+		handler: c.newHandler(w),
 	}
 }
 
-func (c *Config) newHandler() slog.Handler {
+func (c *Config) newHandler(w io.Writer) slog.Handler {
 	if c.UseTextHandler {
-		return slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		return slog.NewTextHandler(w, &slog.HandlerOptions{
 			Level: c.Level,
 		})
 	}
 	if c.UseJSONHandler {
-		return slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+		return slog.NewJSONHandler(w, &slog.HandlerOptions{
 			Level: c.Level,
 		})
 	}
-	return tint.NewHandler(os.Stderr, &tint.Options{
+	return tint.NewHandler(w, &tint.Options{
 		Level:   c.Level,
 		NoColor: c.NoColor,
 	})
@@ -65,8 +66,17 @@ func (c *Config) NewLoggerWithHandler(handler slog.Handler) *Logger {
 	}
 }
 
+// NewTestLogger creates a new [*Logger] for use in tests.
+func (c *Config) NewTestLogger(t testingLogger) *Logger {
+	return &Logger{
+		level:   c.Level,
+		noTime:  c.NoTime,
+		handler: c.newHandler(newTestingWriter(t)),
+	}
+}
+
 // Logger is an opinionated logging implementation that writes structured log messages,
-// tinted with color by default, to [os.Stderr].
+// tinted with color by default, to its handler.
 type Logger struct {
 	level   slog.Level
 	noTime  bool
@@ -194,4 +204,21 @@ func Addrp(key string, addrp *netip.Addr) slog.Attr {
 // or the call is guarded by [Logger.Enabled].
 func AddrPortp(key string, addrPortp *netip.AddrPort) slog.Attr {
 	return slog.Any(key, addrPortp)
+}
+
+type testingLogger interface {
+	Logf(format string, args ...any)
+}
+
+type testingWriter struct {
+	t testingLogger
+}
+
+func newTestingWriter(t testingLogger) *testingWriter {
+	return &testingWriter{t}
+}
+
+func (w *testingWriter) Write(p []byte) (n int, err error) {
+	w.t.Logf("%s", p)
+	return len(p), nil
 }

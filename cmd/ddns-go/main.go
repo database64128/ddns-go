@@ -33,7 +33,7 @@ func init() {
 	flag.BoolVar(&logNoTime, "logNoTime", false, "Disable timestamps in log output")
 	flag.BoolVar(&logKVPairs, "logKVPairs", false, "Use key=value pairs in log output")
 	flag.BoolVar(&logJSON, "logJSON", false, "Use JSON in log output")
-	flag.TextVar(&logLevel, "logLevel", slog.LevelInfo, "Log level")
+	flag.TextVar(&logLevel, "logLevel", slog.LevelInfo, "Log level, one of: DEBUG, INFO, WARN, ERROR")
 	flag.StringVar(&confPath, "confPath", "config.json", "Path to the configuration file")
 }
 
@@ -61,7 +61,7 @@ func main() {
 		UseTextHandler: logKVPairs,
 		UseJSONHandler: logJSON,
 	}
-	logger := logCfg.NewLogger()
+	logger := logCfg.NewLogger(os.Stderr)
 	logger.Info("ddns-go", slog.String("version", ddnsgo.Version))
 
 	var cfg service.Config
