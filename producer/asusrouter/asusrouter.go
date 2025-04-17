@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/database64128/ddns-go/jsonhelper"
+	"github.com/database64128/ddns-go/jsoncfg"
 	"github.com/database64128/ddns-go/producer"
 	"github.com/database64128/ddns-go/producer/internal/poller"
 	"github.com/database64128/ddns-go/tslog"
@@ -179,7 +179,7 @@ func (s *Source) Snapshot(ctx context.Context) (producer.Message, error) {
 type ProducerConfig struct {
 	// BaseURL is the base URL of the ASUS router web interface.
 	// If empty, it defaults to "http://router.asus.com".
-	BaseURL string `json:"base_url"`
+	BaseURL string `json:"base_url,omitzero"`
 
 	// Username is the username for logging into the ASUS router.
 	Username string `json:"username"`
@@ -189,11 +189,11 @@ type ProducerConfig struct {
 
 	// AJAXStatusIPKey is the key for extracting the WAN IP address from the AJAX status response.
 	// If empty, it defaults to "wan0_ipaddr=".
-	AJAXStatusIPKey string `json:"ajax_status_ip_key"`
+	AJAXStatusIPKey string `json:"ajax_status_ip_key,omitzero"`
 
 	// PollInterval is the interval between polling the router for the WAN IP address.
 	// If not positive, it defaults to 5 minutes.
-	PollInterval jsonhelper.Duration `json:"poll_interval"`
+	PollInterval jsoncfg.Duration `json:"poll_interval,omitzero"`
 }
 
 // NewProducer creates a new [producer.Producer] that monitors the WAN IP address of an ASUS router.

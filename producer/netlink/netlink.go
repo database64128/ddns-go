@@ -31,7 +31,7 @@ type ProducerConfig struct {
 	//
 	// This option is useful when a VPN connection is the default route, and the
 	// physical interface still needs to handle incoming connections.
-	FromAddrLookupMain bool `json:"from_addr_lookup_main"`
+	FromAddrLookupMain bool `json:"from_addr_lookup_main,omitzero"`
 }
 
 // NewProducer creates a new producer that monitors the IP addresses of a network interface.

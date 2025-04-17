@@ -9,7 +9,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/database64128/ddns-go/jsonhelper"
+	"github.com/database64128/ddns-go/jsoncfg"
 	"github.com/database64128/ddns-go/producer"
 	"github.com/database64128/ddns-go/tslog"
 )
@@ -57,7 +57,7 @@ type ProducerConfig struct {
 
 	// PollInterval is the interval between polling routing information for interface addresses.
 	// If not positive, it defaults to 90 seconds.
-	PollInterval jsonhelper.Duration `json:"poll_interval"`
+	PollInterval jsoncfg.Duration `json:"poll_interval,omitzero"`
 }
 
 // NewProducer creates a new [producer.Producer] that monitors the IP addresses of a network interface.

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/database64128/ddns-go/jsonhelper"
+	"github.com/database64128/ddns-go/jsoncfg"
 	"github.com/database64128/ddns-go/producer"
 	"github.com/database64128/ddns-go/producer/asusrouter"
 	"github.com/database64128/ddns-go/producer/bsdroute"
@@ -36,7 +36,7 @@ type Config struct {
 
 	// StartupDelay is the amount of time to wait before starting the service.
 	// This can be useful if the service is started before the network is ready.
-	StartupDelay jsonhelper.Duration `json:"startup_delay"`
+	StartupDelay jsoncfg.Duration `json:"startup_delay,omitzero"`
 }
 
 // NewService creates a new [Service] from the configuration.
@@ -191,22 +191,22 @@ type SourceConfig struct {
 	Type string `json:"type"`
 
 	// ASUSRouter is the producer configuration for an ASUS router source.
-	ASUSRouter asusrouter.ProducerConfig `json:"asusrouter"`
+	ASUSRouter asusrouter.ProducerConfig `json:"asusrouter,omitzero"`
 
 	// IPAPI is the producer configuration for an IP address API source.
-	IPAPI ipapi.ProducerConfig `json:"ipapi"`
+	IPAPI ipapi.ProducerConfig `json:"ipapi,omitzero"`
 
 	// Iface is the producer configuration for a generic network interface source.
-	Iface iface.ProducerConfig `json:"iface"`
+	Iface iface.ProducerConfig `json:"iface,omitzero"`
 
 	// Netlink is the producer configuration for a netlink network interface source.
-	Netlink netlink.ProducerConfig `json:"netlink"`
+	Netlink netlink.ProducerConfig `json:"netlink,omitzero"`
 
 	// BSDRoute is the producer configuration for a bsdroute network interface source.
-	BSDRoute bsdroute.ProducerConfig `json:"bsdroute"`
+	BSDRoute bsdroute.ProducerConfig `json:"bsdroute,omitzero"`
 
 	// Win32IPHLP is the producer configuration for a win32iphlp network interface source.
-	Win32IPHLP win32iphlp.ProducerConfig `json:"win32iphlp"`
+	Win32IPHLP win32iphlp.ProducerConfig `json:"win32iphlp,omitzero"`
 }
 
 // NewProducer creates a new [producer.Producer] from the configuration.
@@ -261,11 +261,11 @@ type DomainConfig struct {
 
 	// IPv4Source is the name of the source for the domain's IPv4 address.
 	// If empty, the domain's IPv4 address is not managed.
-	IPv4Source string `json:"ipv4_source"`
+	IPv4Source string `json:"ipv4_source,omitzero"`
 
 	// IPv6Source is the name of the source for the domain's IPv6 address.
 	// If empty, the domain's IPv6 address is not managed.
-	IPv6Source string `json:"ipv6_source"`
+	IPv6Source string `json:"ipv6_source,omitzero"`
 }
 
 // domainManagerState represents the state of a domain manager.

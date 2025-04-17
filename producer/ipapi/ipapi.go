@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/database64128/ddns-go/jsonhelper"
+	"github.com/database64128/ddns-go/jsoncfg"
 	"github.com/database64128/ddns-go/producer"
 	"github.com/database64128/ddns-go/producer/internal/poller"
 	"github.com/database64128/ddns-go/tslog"
@@ -22,11 +22,11 @@ type ProducerConfig struct {
 
 	// URL is the URL of the IP address API.
 	// If empty, the source default is used.
-	URL string `json:"url"`
+	URL string `json:"url,omitzero"`
 
 	// PollInterval is the interval between polling the IP address API.
 	// If not positive, it defaults to 5 minutes.
-	PollInterval jsonhelper.Duration `json:"poll_interval"`
+	PollInterval jsoncfg.Duration `json:"poll_interval,omitzero"`
 }
 
 // NewProducer creates a new [producer.Producer] that monitors the public IP address from an IP address API.
