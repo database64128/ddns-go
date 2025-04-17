@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/database64128/ddns-go/internal/httphelper"
+	"github.com/database64128/ddns-go/internal/httpreq"
 	"github.com/database64128/ddns-go/provider"
 )
 
@@ -164,7 +164,7 @@ type UpdateDNSRecordRequest struct {
 // NewRequest creates a new request to update a DNS record.
 func (r *UpdateDNSRecordRequest) NewRequest(ctx context.Context, zoneID, recordID string) (*http.Request, error) {
 	url := fmt.Sprintf("%s/zones/%s/dns_records/%s", baseURL, zoneID, recordID)
-	return httphelper.NewJSONRequest(ctx, http.MethodPatch, url, r)
+	return httpreq.NewJSONRequest(ctx, http.MethodPatch, url, r)
 }
 
 // DNSRecord represents a DNS record in a zone.
@@ -191,7 +191,7 @@ type DNSRecord struct {
 // NewCreateRequest creates a new request to create a DNS record.
 func (r *DNSRecord) NewCreateRequest(ctx context.Context, zoneID string) (*http.Request, error) {
 	url := fmt.Sprintf("%s/zones/%s/dns_records", baseURL, zoneID)
-	return httphelper.NewJSONRequest(ctx, http.MethodPost, url, r)
+	return httpreq.NewJSONRequest(ctx, http.MethodPost, url, r)
 }
 
 // NewDeleteRequest creates a new request to delete a DNS record.

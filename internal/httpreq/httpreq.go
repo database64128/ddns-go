@@ -1,4 +1,4 @@
-package httphelper
+package httpreq
 
 import (
 	"bytes"
