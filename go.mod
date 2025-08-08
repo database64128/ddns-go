@@ -4,6 +4,6 @@ go 1.24.0
 
 require (
 	github.com/lmittmann/tint v1.1.2
-	golang.org/x/net v0.42.0
-	golang.org/x/sys v0.34.0
+	golang.org/x/net v0.43.0
+	golang.org/x/sys v0.35.0
 )
