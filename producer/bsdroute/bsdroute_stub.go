@@ -3,7 +3,9 @@
 package bsdroute
 
 import (
-	"github.com/database64128/ddns-go/producer"
+	"context"
+
+	producerpkg "github.com/database64128/ddns-go/producer"
 	"github.com/database64128/ddns-go/tslog"
 )
 
@@ -13,10 +15,20 @@ func newSource(_ string) (*Source, error) {
 	return nil, ErrPlatformUnsupported
 }
 
-func (source) snapshot() (producer.Message, error) {
-	return producer.Message{}, ErrPlatformUnsupported
+func (source) snapshot() (producerpkg.Message, error) {
+	return producerpkg.Message{}, ErrPlatformUnsupported
 }
 
-func (*ProducerConfig) newProducer(_ *tslog.Logger) (producer.Producer, error) {
+func (*ProducerConfig) newProducer(_ *tslog.Logger) (*Producer, error) {
 	return nil, ErrPlatformUnsupported
+}
+
+type producer struct{}
+
+func (producer) subscribe() <-chan producerpkg.Message {
+	panic(ErrPlatformUnsupported)
+}
+
+func (producer) run(_ context.Context) {
+	panic(ErrPlatformUnsupported)
 }

@@ -49,8 +49,7 @@
             "name": "en0",
             "type": "bsdroute",
             "bsdroute": {
-                "interface": "en0",
-                "poll_interval": "90s"
+                "interface": "en0"
             }
         },
         {

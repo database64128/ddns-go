@@ -9,8 +9,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/database64128/ddns-go/jsoncfg"
-	"github.com/database64128/ddns-go/producer"
+	producerpkg "github.com/database64128/ddns-go/producer"
 	"github.com/database64128/ddns-go/tslog"
 )
 
@@ -28,10 +27,10 @@ func (PlatformUnsupportedError) Is(target error) bool {
 var ErrPlatformUnsupported = PlatformUnsupportedError{}
 
 // Source obtains the first IPv4 and IPv6 addresses from a network interface,
-// using routing information on supported BSD variants. It only picks the first
+// using PF_ROUTE sysctl(2) on supported BSD variants. It only picks the first
 // address of each family.
 //
-// Source implements [producer.Source].
+// Source implements [producerpkg.Source].
 type Source struct {
 	source
 }
@@ -41,12 +40,12 @@ func NewSource(name string) (*Source, error) {
 	return newSource(name)
 }
 
-var _ producer.Source = (*Source)(nil)
+var _ producerpkg.Source = (*Source)(nil)
 
 // Snapshot returns the first IPv4 and IPv6 addresses of the network interface.
 //
-// Snapshot implements [producer.Source.Snapshot].
-func (s *Source) Snapshot(_ context.Context) (producer.Message, error) {
+// Snapshot implements [producerpkg.Source.Snapshot].
+func (s *Source) Snapshot(_ context.Context) (producerpkg.Message, error) {
 	return s.snapshot()
 }
 
@@ -54,13 +53,33 @@ func (s *Source) Snapshot(_ context.Context) (producer.Message, error) {
 type ProducerConfig struct {
 	// Interface is the name of the network interface to monitor.
 	Interface string `json:"interface"`
-
-	// PollInterval is the interval between polling routing information for interface addresses.
-	// If not positive, it defaults to 90 seconds.
-	PollInterval jsoncfg.Duration `json:"poll_interval,omitzero"`
 }
 
-// NewProducer creates a new [producer.Producer] that monitors the IP addresses of a network interface.
-func (cfg *ProducerConfig) NewProducer(logger *tslog.Logger) (producer.Producer, error) {
+// NewProducer creates a new producer that monitors the IP addresses of a network interface.
+func (cfg *ProducerConfig) NewProducer(logger *tslog.Logger) (*Producer, error) {
 	return cfg.newProducer(logger)
+}
+
+// Producer monitors the IP addresses of a network interface using the routing socket,
+// and broadcasts IP address change notifications to subscribers.
+//
+// Producer implements [producerpkg.Producer].
+type Producer struct {
+	producer
+}
+
+var _ producerpkg.Producer = (*Producer)(nil)
+
+// Subscribe returns a channel for receiving updates on IP address changes.
+//
+// Subscribe implements [producerpkg.Producer.Subscribe].
+func (p *Producer) Subscribe() <-chan producerpkg.Message {
+	return p.subscribe()
+}
+
+// Run initiates the monitoring process for IP address changes.
+//
+// Run implements [producerpkg.Producer.Run].
+func (p *Producer) Run(ctx context.Context) {
+	p.run(ctx)
 }
