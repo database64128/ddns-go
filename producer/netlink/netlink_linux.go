@@ -79,11 +79,9 @@ func (p *producer) run(ctx context.Context) {
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		p.readAndHandle(c.NewRConn(), ruleAddrUpdateCh)
-	}()
+	})
 
 	wc := c.NewWConn()
 	wsa := unix.RawSockaddrNetlink{
