@@ -105,7 +105,7 @@ func (s *source) handleRouteMessage(ioctlFd int, b []byte) (addr4, addr6 netip.A
 			var addrs [unix.RTAX_MAX]*unix.RawSockaddr
 			bsdroute.ParseAddrs(&addrs, addrsBuf, ifam.Addrs)
 
-			ifaAddr := addrFromSockaddr(addrs[unix.RTAX_IFA])
+			ifaAddr := ipFromSockaddr(addrs[unix.RTAX_IFA])
 			if !ifaAddr.IsValid() || ifaAddr.IsLinkLocalUnicast() {
 				continue
 			}
@@ -129,7 +129,7 @@ func (s *source) handleRouteMessage(ioctlFd int, b []byte) (addr4, addr6 netip.A
 	return addr4, addr6, ifindex, nil
 }
 
-func addrFromSockaddr(sa *unix.RawSockaddr) netip.Addr {
+func ipFromSockaddr(sa *unix.RawSockaddr) netip.Addr {
 	if sa == nil {
 		return netip.Addr{}
 	}
@@ -152,6 +152,13 @@ func addrFromSockaddr(sa *unix.RawSockaddr) netip.Addr {
 	default:
 		return netip.Addr{}
 	}
+}
+
+func ifindexFromSockaddr(sa *unix.RawSockaddr) uint16 {
+	if sa == nil || sa.Len < unix.SizeofSockaddrDatalink || sa.Family != unix.AF_LINK {
+		return 0
+	}
+	return (*unix.RawSockaddrDatalink)(unsafe.Pointer(sa)).Index
 }
 
 func ifnameFromSockaddr(sa *unix.RawSockaddr) []byte {
@@ -374,7 +381,7 @@ func (p *producer) handleRouteMessage(ioctlFd int, b []byte) (updated bool) {
 			var addrs [unix.RTAX_MAX]*unix.RawSockaddr
 			bsdroute.ParseAddrs(&addrs, addrsBuf, ifam.Addrs)
 
-			ifaAddr := addrFromSockaddr(addrs[unix.RTAX_IFA])
+			ifaAddr := ipFromSockaddr(addrs[unix.RTAX_IFA])
 			if !ifaAddr.IsValid() || ifaAddr.IsLinkLocalUnicast() {
 				continue
 			}
@@ -451,6 +458,69 @@ func (p *producer) handleRouteMessage(ioctlFd int, b []byte) (updated bool) {
 			default:
 				panic("unreachable")
 			}
+
+		case unix.RTM_DELETE:
+			if len(msgBuf) < unix.SizeofRtMsghdr {
+				p.logger.Error("Invalid rt_msghdr length",
+					tslog.Uint("msglen", m.Msglen),
+					tslog.Uint("version", m.Version),
+					slog.Any("type", bsdroute.MsgType(m.Type)),
+				)
+				return
+			}
+
+			rtm := (*unix.RtMsghdr)(unsafe.Pointer(m))
+			if rtm.Flags&unix.RTF_STATIC == 0 {
+				continue
+			}
+
+			addrsBuf, ok := m.AddrsBuf(msgBuf, unix.SizeofRtMsghdr)
+			if !ok {
+				p.logger.Error("Invalid rtm_hdrlen",
+					tslog.Uint("msglen", m.Msglen),
+					tslog.Uint("version", m.Version),
+					slog.Any("type", bsdroute.MsgType(m.Type)),
+					tslog.Uint("hdrlen", m.HeaderLen()),
+				)
+				return
+			}
+
+			var addrs [unix.RTAX_MAX]*unix.RawSockaddr
+			bsdroute.ParseAddrs(&addrs, addrsBuf, rtm.Addrs)
+
+			dstAddr := ipFromSockaddr(addrs[unix.RTAX_DST])
+			if dstAddr != p.addr4 {
+				continue
+			}
+
+			gatewayAddr := ifindexFromSockaddr(addrs[unix.RTAX_GATEWAY])
+			if gatewayAddr != p.ifindex {
+				continue
+			}
+
+			ifaAddr := ipFromSockaddr(addrs[unix.RTAX_IFA])
+			if ifaAddr != p.addr4 {
+				continue
+			}
+
+			if p.logger.Enabled(slog.LevelDebug) {
+				p.logger.Debug("Processing rt_msghdr",
+					slog.Any("type", bsdroute.MsgType(rtm.Type)),
+					tslog.Uint("index", rtm.Index),
+					slog.Any("flags", bsdroute.RouteFlags(rtm.Flags)),
+					tslog.Int("pid", rtm.Pid),
+					tslog.Int("seq", rtm.Seq),
+					tslog.Addr("dstAddr", dstAddr),
+					tslog.Uint("gatewayAddr", gatewayAddr),
+					tslog.Addr("ifaAddr", ifaAddr),
+				)
+			}
+
+			// On macOS, in some scenarios, an interface IPv4 address can go away
+			// without an RTM_DELADDR message. Here we deduce the address removal
+			// from the deletion of its corresponding static route.
+			p.addr4 = netip.Addr{}
+			updated = true
 		}
 	}
 
