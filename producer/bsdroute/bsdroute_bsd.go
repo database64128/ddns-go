@@ -83,7 +83,7 @@ func (s *source) handleRouteMessage(ioctlFd int, b []byte) (addr4, addr6 netip.A
 			bsdroute.ParseAddrs(&addrs, addrsBuf, ifm.Addrs)
 
 			ifpAddr := ifnameFromSockaddr(addrs[unix.RTAX_IFP])
-			if ifpAddr == s.name {
+			if string(ifpAddr) == s.name {
 				ifindex = ifm.Index
 			}
 
@@ -154,14 +154,13 @@ func addrFromSockaddr(sa *unix.RawSockaddr) netip.Addr {
 	}
 }
 
-func ifnameFromSockaddr(sa *unix.RawSockaddr) string {
+func ifnameFromSockaddr(sa *unix.RawSockaddr) []byte {
 	if sa != nil && sa.Len >= unix.SizeofSockaddrDatalink && sa.Family == unix.AF_LINK {
 		if sa := (*unix.RawSockaddrDatalink)(unsafe.Pointer(sa)); int(sa.Nlen) <= len(sa.Data) {
-			ifnameBuf := unsafe.Slice((*byte)(unsafe.Pointer(&sa.Data)), sa.Nlen)
-			return string(ifnameBuf)
+			return unsafe.Slice((*byte)(unsafe.Pointer(&sa.Data)), sa.Nlen)
 		}
 	}
-	return ""
+	return nil
 }
 
 func (cfg *ProducerConfig) newProducer(logger *tslog.Logger) (*Producer, error) {
@@ -322,15 +321,15 @@ func (p *producer) handleRouteMessage(ioctlFd int, b []byte) (updated bool) {
 				p.logger.Debug("Processing if_msghdr",
 					slog.Any("flags", bsdroute.IfaceFlags(ifm.Flags)),
 					tslog.Uint("index", ifm.Index),
-					slog.String("ifpAddr", ifpAddr),
+					tslog.ByteString("ifpAddr", ifpAddr),
 				)
 			}
 
-			if ifpAddr == p.ifname {
+			if string(ifpAddr) == p.ifname {
 				if ifm.Flags&unix.IFF_UP != 0 {
 					if p.logger.Enabled(slog.LevelInfo) {
 						p.logger.Info("Found interface",
-							slog.String("name", ifpAddr),
+							tslog.ByteString("name", ifpAddr),
 							tslog.Uint("index", ifm.Index),
 						)
 					}
@@ -338,7 +337,7 @@ func (p *producer) handleRouteMessage(ioctlFd int, b []byte) (updated bool) {
 				} else {
 					if p.logger.Enabled(slog.LevelInfo) {
 						p.logger.Info("Lost interface",
-							slog.String("name", ifpAddr),
+							tslog.ByteString("name", ifpAddr),
 							tslog.Uint("index", ifm.Index),
 						)
 					}
