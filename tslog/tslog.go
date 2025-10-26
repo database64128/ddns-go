@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"time"
+	"unsafe"
 
 	"github.com/lmittmann/tint"
 )
@@ -154,6 +155,11 @@ func Int[V ~int | ~int8 | ~int16 | ~int32 | ~int64](key string, value V) slog.At
 // Uint returns a [slog.Attr] for an unsigned integer of any size.
 func Uint[V ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr](key string, value V) slog.Attr {
 	return slog.Uint64(key, uint64(value))
+}
+
+// ByteString returns a [slog.Attr] for a byte slice as a string value without allocating.
+func ByteString(key string, b []byte) slog.Attr {
+	return slog.String(key, unsafe.String(unsafe.SliceData(b), len(b)))
 }
 
 // Addr returns a [slog.Attr] for a [netip.Addr].
