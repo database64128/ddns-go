@@ -36,14 +36,14 @@ func newSource(name string) (*Source, error) {
 }
 
 func (s *source) snapshot() (producerpkg.Message, error) {
-	addr4, addr6, _, _, err := s.getAdaptersAddresses()
+	addr4, addr6, err := s.getAdaptersAddresses()
 	return producerpkg.Message{
 		IPv4: addr4,
 		IPv6: addr6,
 	}, err
 }
 
-func (s *source) getAdaptersAddresses() (addr4, addr6 netip.Addr, addr4PreferredLifetime, addr6PreferredLifetime uint32, err error) {
+func (s *source) getAdaptersAddresses() (addr4, addr6 netip.Addr, err error) {
 	const maxTries = 3
 	size := uint32(max(15000, cap(s.buf))) // recommended initial size 15 KB
 	for range maxTries {
@@ -58,7 +58,7 @@ func (s *source) getAdaptersAddresses() (addr4, addr6 netip.Addr, addr4Preferred
 			&size,
 		); err != nil {
 			if err != windows.ERROR_BUFFER_OVERFLOW || size <= uint32(len(s.buf)) {
-				return netip.Addr{}, netip.Addr{}, 0, 0, os.NewSyscallError("GetAdaptersAddresses", err)
+				return netip.Addr{}, netip.Addr{}, os.NewSyscallError("GetAdaptersAddresses", err)
 			}
 			continue
 		}
@@ -67,10 +67,10 @@ func (s *source) getAdaptersAddresses() (addr4, addr6 netip.Addr, addr4Preferred
 		}
 		return s.parseAdapterAddresses(p)
 	}
-	return netip.Addr{}, netip.Addr{}, 0, 0, errors.New("ran out of tries for GetAdaptersAddresses")
+	return netip.Addr{}, netip.Addr{}, errors.New("ran out of tries for GetAdaptersAddresses")
 }
 
-func (s *source) parseAdapterAddresses(aa *windows.IpAdapterAddresses) (addr4, addr6 netip.Addr, addr4PreferredLifetime, addr6PreferredLifetime uint32, err error) {
+func (s *source) parseAdapterAddresses(aa *windows.IpAdapterAddresses) (addr4, addr6 netip.Addr, err error) {
 	for ; aa != nil; aa = aa.Next {
 		// Skip irrelevant interfaces.
 		if s.luid != 0 {
@@ -97,6 +97,8 @@ func (s *source) parseAdapterAddresses(aa *windows.IpAdapterAddresses) (addr4, a
 
 			s.luid = aa.Luid
 		}
+
+		var addr4PreferredLifetime, addr6PreferredLifetime uint32
 
 		for ua := aa.FirstUnicastAddress; ua != nil; ua = ua.Next {
 			// Skip temporary and deprecated addresses.
@@ -132,10 +134,10 @@ func (s *source) parseAdapterAddresses(aa *windows.IpAdapterAddresses) (addr4, a
 			}
 		}
 
-		return addr4, addr6, addr4PreferredLifetime, addr6PreferredLifetime, nil
+		return addr4, addr6, nil
 	}
 
-	return netip.Addr{}, netip.Addr{}, 0, 0, fmt.Errorf("no such network interface: %q", s.name)
+	return netip.Addr{}, netip.Addr{}, fmt.Errorf("no such network interface: %q", s.name)
 }
 
 func (cfg *ProducerConfig) newProducer(logger *tslog.Logger) (*Producer, error) {
@@ -167,8 +169,6 @@ type producer struct {
 	initialNotificationHandled bool
 	addr4                      netip.Addr
 	addr6                      netip.Addr
-	addr4PreferredLifetime     uint32
-	addr6PreferredLifetime     uint32
 	source                     source
 	broadcaster                *broadcaster.Broadcaster
 }
@@ -264,8 +264,6 @@ func (p *producer) run(ctx context.Context) {
 				slog.Uint64("luid", p.source.luid),
 				tslog.Addr("v4", p.addr4),
 				tslog.Addr("v6", p.addr6),
-				tslog.Uint("v4PreferredLifetime", p.addr4PreferredLifetime),
-				tslog.Uint("v6PreferredLifetime", p.addr6PreferredLifetime),
 			)
 		}
 
@@ -403,39 +401,33 @@ func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
 			return false
 		}
 
-		switch nmsg.notificationType {
-		case windows.MibParameterNotification:
-			if addr != p.addr4 && addr != p.addr6 {
-				return false
-			}
-
-		case windows.MibDeleteInstance:
+		if nmsg.notificationType == windows.MibDeleteInstance {
 			switch addr {
 			case p.addr4:
 				if p.logger.Enabled(slog.LevelDebug) {
 					p.logger.Debug("Removing cached IPv4 address",
 						tslog.Addr("addr", addr),
-						tslog.Uint("preferredLifetime", p.addr4PreferredLifetime),
 					)
 				}
 				p.addr4 = netip.Addr{}
-				p.addr4PreferredLifetime = 0
 				return true
 
 			case p.addr6:
 				if p.logger.Enabled(slog.LevelDebug) {
 					p.logger.Debug("Removing cached IPv6 address",
 						tslog.Addr("addr", addr),
-						tslog.Uint("preferredLifetime", p.addr6PreferredLifetime),
 					)
 				}
 				p.addr6 = netip.Addr{}
-				p.addr6PreferredLifetime = 0
 				return true
 
 			default:
 				return false
 			}
+		}
+
+		if addr == p.addr4 || addr == p.addr6 {
+			return false
 		}
 
 		// Retrieve full address information.
@@ -484,68 +476,31 @@ func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
 			)
 		}
 
-		switch addr {
-		case p.addr4:
-			if p.logger.Enabled(slog.LevelDebug) {
-				p.logger.Debug("Updating cached IPv4 address preferred lifetime",
-					tslog.Addr("addr", addr),
-					tslog.Uint("oldPreferredLifetime", p.addr4PreferredLifetime),
-					tslog.Uint("newPreferredLifetime", row.PreferredLifetime),
-				)
-			}
-			p.addr4PreferredLifetime = row.PreferredLifetime
+		// Skip temporary and deprecated addresses.
+		if row.SuffixOrigin == windows.IpSuffixOriginRandom ||
+			row.DadState == windows.IpDadStateDeprecated {
 			return false
-
-		case p.addr6:
-			if p.logger.Enabled(slog.LevelDebug) {
-				p.logger.Debug("Updating cached IPv6 address preferred lifetime",
-					tslog.Addr("addr", addr),
-					tslog.Uint("oldPreferredLifetime", p.addr6PreferredLifetime),
-					tslog.Uint("newPreferredLifetime", row.PreferredLifetime),
-				)
-			}
-			p.addr6PreferredLifetime = row.PreferredLifetime
-			return false
-
-		default: // only on MibAddInstance
-			// Skip temporary and deprecated addresses.
-			if row.SuffixOrigin == windows.IpSuffixOriginRandom ||
-				row.DadState == windows.IpDadStateDeprecated {
-				return false
-			}
-
-			if addr.Is4() {
-				if row.PreferredLifetime < p.addr4PreferredLifetime {
-					return false
-				}
-				if p.logger.Enabled(slog.LevelDebug) {
-					p.logger.Debug("Updating cached IPv4 address",
-						tslog.Addr("oldAddr", p.addr4),
-						tslog.Uint("oldPreferredLifetime", p.addr4PreferredLifetime),
-						tslog.Addr("newAddr", addr),
-						tslog.Uint("newPreferredLifetime", row.PreferredLifetime),
-					)
-				}
-				p.addr4 = addr
-				p.addr4PreferredLifetime = row.PreferredLifetime
-			} else {
-				if row.PreferredLifetime < p.addr6PreferredLifetime {
-					return false
-				}
-				if p.logger.Enabled(slog.LevelDebug) {
-					p.logger.Debug("Updating cached IPv6 address",
-						tslog.Addr("oldAddr", p.addr6),
-						tslog.Uint("oldPreferredLifetime", p.addr6PreferredLifetime),
-						tslog.Addr("newAddr", addr),
-						tslog.Uint("newPreferredLifetime", row.PreferredLifetime),
-					)
-				}
-				p.addr6 = addr
-				p.addr6PreferredLifetime = row.PreferredLifetime
-			}
-
-			return true
 		}
+
+		if addr.Is4() {
+			if p.logger.Enabled(slog.LevelDebug) {
+				p.logger.Debug("Updating cached IPv4 address",
+					tslog.Addr("oldAddr", p.addr4),
+					tslog.Addr("newAddr", addr),
+				)
+			}
+			p.addr4 = addr
+		} else {
+			if p.logger.Enabled(slog.LevelDebug) {
+				p.logger.Debug("Updating cached IPv6 address",
+					tslog.Addr("oldAddr", p.addr6),
+					tslog.Addr("newAddr", addr),
+				)
+			}
+			p.addr6 = addr
+		}
+
+		return true
 
 	case windows.MibInitialNotification:
 		// Skip subsequent initial notifications.
@@ -562,7 +517,7 @@ func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
 		p.initialNotificationHandled = true
 
 		var err error
-		p.addr4, p.addr6, p.addr4PreferredLifetime, p.addr6PreferredLifetime, err = p.source.getAdaptersAddresses()
+		p.addr4, p.addr6, err = p.source.getAdaptersAddresses()
 		if err != nil {
 			p.logger.Error("Failed to get interface IP addresses", tslog.Err(err))
 			return false
