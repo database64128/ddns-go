@@ -34,17 +34,15 @@ func (cfg *ProducerConfig) newProducer(logger *tslog.Logger) (*Producer, error) 
 }
 
 type producer struct {
-	logger                 *tslog.Logger
-	broadcaster            *broadcaster.Broadcaster
-	respChBySeq            map[uint32]chan<- syscall.Errno
-	ifname                 string
-	fromAddrLookupMain     bool
-	seq                    uint32
-	ifindex                uint32
-	addr4                  netip.Addr
-	addr6                  netip.Addr
-	addr4PreferredLifetime uint32
-	addr6PreferredLifetime uint32
+	logger             *tslog.Logger
+	broadcaster        *broadcaster.Broadcaster
+	respChBySeq        map[uint32]chan<- syscall.Errno
+	ifname             string
+	fromAddrLookupMain bool
+	seq                uint32
+	ifindex            uint32
+	addr4              netip.Addr
+	addr6              netip.Addr
 }
 
 func (p *producer) subscribe() <-chan producerpkg.Message {
@@ -174,8 +172,6 @@ func (p *producer) readAndHandle(rc *rtnetlink.RConn, ruleAddrUpdateCh chan<- ad
 				tslog.Uint("ifindex", p.ifindex),
 				tslog.Addr("v4", p.addr4),
 				tslog.Addr("v6", p.addr6),
-				tslog.Uint("v4PreferredLifetime", p.addr4PreferredLifetime),
-				tslog.Uint("v6PreferredLifetime", p.addr6PreferredLifetime),
 			)
 		}
 
@@ -350,10 +346,11 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 					)
 				}
 
-				// Skip temporary addresses, but not deprecated ones.
+				// Skip temporary addresses, as they are inherently temporary.
 				//
-				// When an address becomes deprecated, we will receive an RTM_NEWADDR message for it.
-				// Let the message pass through, so the cached preferred lifetime can be updated.
+				// Permit deprecated addresses, because we get notified of address
+				// deprecations via RTM_NEWADDR messages, and we need to be able to
+				// remove them from our cache.
 				if flags&unix.IFA_F_TEMPORARY != 0 {
 					break
 				}
@@ -363,103 +360,53 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 					break
 				}
 
-				switch ifam.Family {
-				case unix.AF_INET:
-					if !addr.Is4() {
-						p.logger.Error("Invalid IPv4 address",
-							tslog.Addr("addr", addr),
-						)
+				switch nlh.Type {
+				case unix.RTM_NEWADDR:
+					if flags&unix.IFA_F_DEPRECATED != 0 {
 						break
 					}
 
-					switch nlh.Type {
-					case unix.RTM_NEWADDR:
-						switch {
-						case p.addr4 == addr:
-							if p.logger.Enabled(slog.LevelDebug) {
-								p.logger.Debug("Updating cached IPv4 address preferred lifetime",
-									tslog.Addr("addr", addr),
-									tslog.Uint("oldPreferredLifetime", p.addr4PreferredLifetime),
-									tslog.Uint("newPreferredLifetime", cacheInfo.Prefered),
-								)
-							}
-							p.addr4PreferredLifetime = cacheInfo.Prefered
-
-						case p.addr4PreferredLifetime <= cacheInfo.Prefered:
-							if p.logger.Enabled(slog.LevelDebug) {
-								p.logger.Debug("Updating cached IPv4 address",
-									tslog.Addr("oldAddr", p.addr4),
-									tslog.Uint("oldPreferredLifetime", p.addr4PreferredLifetime),
-									tslog.Addr("newAddr", addr),
-									tslog.Uint("newPreferredLifetime", cacheInfo.Prefered),
-								)
-							}
-							p.addr4 = addr
-							p.addr4PreferredLifetime = cacheInfo.Prefered
-							addr4updated = true
+					switch {
+					case addr.Is4() && addr != p.addr4:
+						if p.logger.Enabled(slog.LevelDebug) {
+							p.logger.Debug("Updating cached IPv4 address",
+								tslog.Addr("oldAddr", p.addr4),
+								tslog.Addr("newAddr", addr),
+							)
 						}
+						p.addr4 = addr
+						addr4updated = true
 
-					case unix.RTM_DELADDR:
-						if p.addr4 == addr {
-							if p.logger.Enabled(slog.LevelDebug) {
-								p.logger.Debug("Removing cached IPv4 address",
-									tslog.Addr("addr", addr),
-									tslog.Uint("preferredLifetime", cacheInfo.Prefered),
-								)
-							}
-							p.addr4 = netip.Addr{}
-							p.addr4PreferredLifetime = 0
-							addr4updated = true
+					case addr.Is6() && addr != p.addr6:
+						if p.logger.Enabled(slog.LevelDebug) {
+							p.logger.Debug("Updating cached IPv6 address",
+								tslog.Addr("oldAddr", p.addr6),
+								tslog.Addr("newAddr", addr),
+							)
 						}
+						p.addr6 = addr
+						addr6updated = true
 					}
 
-				case unix.AF_INET6:
-					if !addr.Is6() {
-						p.logger.Error("Invalid IPv6 address",
-							tslog.Addr("addr", addr),
-						)
-						break
-					}
-
-					switch nlh.Type {
-					case unix.RTM_NEWADDR:
-						switch {
-						case p.addr6 == addr:
-							if p.logger.Enabled(slog.LevelDebug) {
-								p.logger.Debug("Updating cached IPv6 address preferred lifetime",
-									tslog.Addr("addr", addr),
-									tslog.Uint("oldPreferredLifetime", p.addr6PreferredLifetime),
-									tslog.Uint("newPreferredLifetime", cacheInfo.Prefered),
-								)
-							}
-							p.addr6PreferredLifetime = cacheInfo.Prefered
-
-						case p.addr6PreferredLifetime <= cacheInfo.Prefered:
-							if p.logger.Enabled(slog.LevelDebug) {
-								p.logger.Debug("Updating cached IPv6 address",
-									tslog.Addr("oldAddr", p.addr6),
-									tslog.Uint("oldPreferredLifetime", p.addr6PreferredLifetime),
-									tslog.Addr("newAddr", addr),
-									tslog.Uint("newPreferredLifetime", cacheInfo.Prefered),
-								)
-							}
-							p.addr6 = addr
-							p.addr6PreferredLifetime = cacheInfo.Prefered
-							addr6updated = true
+				case unix.RTM_DELADDR:
+					switch addr {
+					case p.addr4:
+						if p.logger.Enabled(slog.LevelDebug) {
+							p.logger.Debug("Removing cached IPv4 address",
+								tslog.Addr("addr", addr),
+							)
 						}
+						p.addr4 = netip.Addr{}
+						addr4updated = true
 
-					case unix.RTM_DELADDR:
-						if p.addr6 == addr {
-							if p.logger.Enabled(slog.LevelDebug) {
-								p.logger.Debug("Removing cached IPv6 address",
-									tslog.Addr("addr", addr),
-									tslog.Uint("preferredLifetime", cacheInfo.Prefered),
-								)
-							}
-							p.addr6 = netip.Addr{}
-							p.addr6PreferredLifetime = 0
-							addr6updated = true
+					case p.addr6:
+						if p.logger.Enabled(slog.LevelDebug) {
+							p.logger.Debug("Removing cached IPv6 address",
+								tslog.Addr("addr", addr),
+							)
 						}
+						p.addr6 = netip.Addr{}
+						addr6updated = true
 					}
 				}
 
