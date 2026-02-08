@@ -4,5 +4,5 @@ go 1.25.0
 
 require (
 	github.com/lmittmann/tint v1.1.3
-	golang.org/x/sys v0.40.0
+	golang.org/x/sys v0.41.0
 )
