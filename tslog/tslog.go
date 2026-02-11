@@ -164,7 +164,7 @@ func ByteString(key string, b []byte) slog.Attr {
 
 // Addr returns a [slog.Attr] for a [netip.Addr].
 //
-// If addr is the zero value, the value is the empty string.
+// If addr is the zero value, the returned attribute value is the empty string.
 func Addr(key string, addr netip.Addr) slog.Attr {
 	var s string
 	if addr.IsValid() {
@@ -175,7 +175,7 @@ func Addr(key string, addr netip.Addr) slog.Attr {
 
 // AddrPort returns a [slog.Attr] for a [netip.AddrPort].
 //
-// If addrPort is the zero value, the value is the empty string.
+// If addrPort is the zero value, the returned attribute value is the empty string.
 func AddrPort(key string, addrPort netip.AddrPort) slog.Attr {
 	var s string
 	if addrPort.IsValid() {
@@ -186,7 +186,7 @@ func AddrPort(key string, addrPort netip.AddrPort) slog.Attr {
 
 // Prefix returns a [slog.Attr] for a [netip.Prefix].
 //
-// If prefix is the zero value, the value is the empty string.
+// If prefix is the zero value, the returned attribute value is the empty string.
 func Prefix(key string, prefix netip.Prefix) slog.Attr {
 	var s string
 	if prefix.IsValid() {
