@@ -193,9 +193,45 @@ var notifyUnicastIpAddressChangeCallback = sync.OnceValue(func() uintptr {
 })
 
 func (p *producer) run(ctx context.Context) {
-	// It's been observed that NotifyUnicastIpAddressChange sends 2 initial notifications and
-	// blocks until the callback calls return. Be safe here and give it 2 extra slots.
-	notifyCh := make(chan mibNotification, 4)
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
+	notifyCh := make(chan mibNotification)
+	defer close(notifyCh)
+
+	// Spin up the consumer goroutine before calling NotifyUnicastIpAddressChange,
+	// because NotifyUnicastIpAddressChange sends initial notifications and blocks
+	// until the callback calls return.
+	wg.Go(func() {
+		p.initialNotificationHandled = false
+
+		for nmsg := range notifyCh {
+			if p.logger.Enabled(slog.LevelDebug) {
+				p.logger.Debug("Received IP address change notification",
+					tslog.Uint("luid", nmsg.interfaceLuid),
+					tslog.Uint("index", nmsg.interfaceIndex),
+					tslog.Uint("type", nmsg.notificationType),
+				)
+			}
+
+			if updated := p.handleMibNotification(nmsg); !updated {
+				continue
+			}
+
+			if p.logger.Enabled(slog.LevelInfo) {
+				p.logger.Info("Broadcasting interface IP addresses",
+					slog.Uint64("luid", p.source.luid),
+					tslog.Addr("v4", p.addr4),
+					tslog.Addr("v6", p.addr6),
+				)
+			}
+
+			p.broadcaster.Broadcast(producerpkg.Message{
+				IPv4: p.addr4,
+				IPv6: p.addr6,
+			})
+		}
+	})
 
 	p.pinner.Pin(&notifyCh)
 	defer p.pinner.Unpin()
@@ -219,59 +255,17 @@ func (p *producer) run(ctx context.Context) {
 		tslog.Uint("notificationHandle", notificationHandle),
 	)
 
-	go func() {
-		// Always close notifyCh, even if we failed to unregister,
-		// because all bets are off anyways.
-		defer close(notifyCh)
+	<-ctx.Done()
 
-		<-ctx.Done()
-
-		// Apparently, even on success, the notification handle can be NULL!
-		// I mean, WTF, Microsoft?!
-		if notificationHandle == 0 {
-			p.logger.Debug("Skipping CancelMibChangeNotify2 because notification handle is NULL")
-			return
-		}
-
-		if err := windows.CancelMibChangeNotify2(notificationHandle); err != nil {
-			p.logger.Error("Failed to unregister for IP address change notifications",
-				tslog.Uint("notificationHandle", notificationHandle),
-				tslog.Err(os.NewSyscallError("CancelMibChangeNotify2", err)),
-			)
-			return
-		}
-
-		p.logger.Info("Unregistered for IP address change notifications")
-	}()
-
-	p.initialNotificationHandled = false
-
-	for nmsg := range notifyCh {
-		if p.logger.Enabled(slog.LevelDebug) {
-			p.logger.Debug("Received IP address change notification",
-				tslog.Uint("luid", nmsg.interfaceLuid),
-				tslog.Uint("index", nmsg.interfaceIndex),
-				tslog.Uint("type", nmsg.notificationType),
-			)
-		}
-
-		if updated := p.handleMibNotification(nmsg); !updated {
-			continue
-		}
-
-		if p.logger.Enabled(slog.LevelInfo) {
-			p.logger.Info("Broadcasting interface IP addresses",
-				slog.Uint64("luid", p.source.luid),
-				tslog.Addr("v4", p.addr4),
-				tslog.Addr("v6", p.addr6),
-			)
-		}
-
-		p.broadcaster.Broadcast(producerpkg.Message{
-			IPv4: p.addr4,
-			IPv6: p.addr6,
-		})
+	if err := windows.CancelMibChangeNotify2(notificationHandle); err != nil {
+		p.logger.Error("Failed to unregister for IP address change notifications",
+			tslog.Uint("notificationHandle", notificationHandle),
+			tslog.Err(os.NewSyscallError("CancelMibChangeNotify2", err)),
+		)
+		return
 	}
+
+	p.logger.Info("Unregistered for IP address change notifications")
 }
 
 func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
@@ -503,7 +497,9 @@ func (p *producer) handleMibNotification(nmsg mibNotification) (updated bool) {
 		return true
 
 	case windows.MibInitialNotification:
-		// Skip subsequent initial notifications.
+		// With AF_UNSPEC, NotifyUnicastIpAddressChange sends 2 initial notifications,
+		// likely one for AF_INET and one for AF_INET6, but with no way to distinguish
+		// between them.
 		if p.initialNotificationHandled {
 			if p.logger.Enabled(slog.LevelDebug) {
 				p.logger.Debug("Skipping subsequent initial IP address change notification",
