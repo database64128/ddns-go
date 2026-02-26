@@ -38,7 +38,7 @@ jobs:
         run: go test -v ./...
 
       - name: Upload Binaries
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ddns-go-${{ github.sha }}-${{ matrix.os }}-${{ runner.arch }}
           path: ddns-go*
