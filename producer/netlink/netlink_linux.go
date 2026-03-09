@@ -26,7 +26,7 @@ func (cfg *ProducerConfig) newProducer(logger *tslog.Logger) (*Producer, error) 
 		producer: producer{
 			logger:             logger,
 			broadcaster:        broadcaster.New(),
-			respChBySeq:        make(map[uint32]chan<- syscall.Errno),
+			respCh:             make(chan response),
 			ifname:             cfg.Interface,
 			fromAddrLookupMain: cfg.FromAddrLookupMain,
 		},
@@ -36,13 +36,18 @@ func (cfg *ProducerConfig) newProducer(logger *tslog.Logger) (*Producer, error) 
 type producer struct {
 	logger             *tslog.Logger
 	broadcaster        *broadcaster.Broadcaster
-	respChBySeq        map[uint32]chan<- syscall.Errno
+	respCh             chan response
 	ifname             string
 	fromAddrLookupMain bool
 	seq                uint32
 	ifindex            uint32
 	addr4              netip.Addr
 	addr6              netip.Addr
+}
+
+type response struct {
+	seq uint32
+	err int32
 }
 
 func (p *producer) subscribe() <-chan producerpkg.Message {
@@ -210,7 +215,7 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 
 		switch nlh.Type {
 		case unix.NLMSG_DONE:
-			p.sendRespBySeq(nlh.Seq, 0)
+			p.respCh <- response{seq: nlh.Seq, err: 0}
 			return
 
 		case unix.NLMSG_ERROR:
@@ -240,7 +245,7 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 				)
 			}
 
-			p.sendRespBySeq(nle.Msg.Seq, syscall.Errno(-nle.Error))
+			p.respCh <- response{seq: nle.Msg.Seq, err: nle.Error}
 
 		case unix.RTM_NEWLINK, unix.RTM_DELLINK:
 			if len(b) < unix.SizeofNlMsghdr+unix.SizeofIfInfomsg {
@@ -672,21 +677,6 @@ func (p *producer) handleRuleUpdates(done <-chan struct{}, ruleAddrUpdateCh <-ch
 	}
 }
 
-func (p *producer) newSeq() (uint32, <-chan syscall.Errno) {
-	p.seq++
-	respCh := make(chan syscall.Errno, 1)
-	p.respChBySeq[p.seq] = respCh
-	return p.seq, respCh
-}
-
-func (p *producer) sendRespBySeq(seq uint32, errno syscall.Errno) {
-	respCh, ok := p.respChBySeq[seq]
-	if ok {
-		respCh <- errno
-		delete(p.respChBySeq, seq)
-	}
-}
-
 func (p *producer) sendAndWait(
 	done <-chan struct{},
 	wc *rtnetlink.WConn,
@@ -694,8 +684,8 @@ func (p *producer) sendAndWait(
 	b []byte,
 	putRequest func([]byte, uint32, *unix.Msghdr),
 ) error {
-	seq, respCh := p.newSeq()
-	putRequest(b, seq, msg)
+	p.seq++
+	putRequest(b, p.seq, msg)
 	if _, err := wc.WriteMsg(msg, 0); err != nil {
 		return err
 	}
@@ -703,9 +693,17 @@ func (p *producer) sendAndWait(
 	select {
 	case <-done:
 		return nil
-	case errno := <-respCh:
-		if errno != 0 {
-			return errno
+	case resp := <-p.respCh:
+		if resp.seq != p.seq {
+			p.logger.Error("Received response with unexpected sequence number",
+				tslog.Uint("reqSeq", p.seq),
+				tslog.Uint("respSeq", resp.seq),
+				tslog.Int("respErr", resp.err),
+			)
+			return nil
+		}
+		if resp.err != 0 {
+			return syscall.Errno(-resp.err)
 		}
 		return nil
 	}
