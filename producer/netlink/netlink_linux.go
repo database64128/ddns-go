@@ -86,36 +86,16 @@ func (p *producer) run(ctx context.Context) {
 		p.readAndHandle(c.NewRConn(), ruleAddrUpdateCh)
 	})
 
-	wc := c.NewWConn()
-	wsa := unix.RawSockaddrNetlink{
-		Family: unix.AF_NETLINK,
-	}
-	const writeBufSize = max(
-		unsafe.Sizeof(linkRequest{}),
-		unsafe.Sizeof(addrRequest{}),
-		unsafe.Sizeof(ruleRequest{}),
-	)
-	wb := make([]byte, writeBufSize)
-	wiov := unix.Iovec{
-		Base: unsafe.SliceData(wb),
-	}
-	wmsg := unix.Msghdr{
-		Name:    (*byte)(unsafe.Pointer(&wsa)),
-		Namelen: unix.SizeofSockaddrNetlink,
-		Iov:     &wiov,
-		Iovlen:  1,
-	}
-
-	if err = p.getLinkDump(done, wc, &wmsg, wb); err != nil {
+	if err = p.getLinkDump(done, c); err != nil {
 		p.logger.Error("Failed to get RTM_GETLINK dump", tslog.Err(err))
 	}
 
-	if err = p.getAddrDump(done, wc, &wmsg, wb); err != nil {
+	if err = p.getAddrDump(done, c); err != nil {
 		p.logger.Error("Failed to get RTM_GETADDR dump", tslog.Err(err))
 	}
 
 	if ruleAddrUpdateCh != nil {
-		p.handleRuleUpdates(done, ruleAddrUpdateCh, wc, &wmsg, wb)
+		p.handleRuleUpdates(done, ruleAddrUpdateCh, c)
 	}
 
 	wg.Wait()
@@ -613,7 +593,7 @@ func (p *producer) handleIfaAttrs(b []byte) (addr netip.Addr, label string, cach
 	return
 }
 
-func (p *producer) handleRuleUpdates(done <-chan struct{}, ruleAddrUpdateCh <-chan addrUpdate, wc *rtnetlink.WConn, msg *unix.Msghdr, b []byte) {
+func (p *producer) handleRuleUpdates(done <-chan struct{}, ruleAddrUpdateCh <-chan addrUpdate, c *rtnetlink.Conn) {
 	var (
 		fromAddr4 netip.Addr
 		fromAddr6 netip.Addr
@@ -622,7 +602,7 @@ func (p *producer) handleRuleUpdates(done <-chan struct{}, ruleAddrUpdateCh <-ch
 	for update := range ruleAddrUpdateCh {
 		if update.addr4updated {
 			// Delete the old rule if it exists.
-			if err := p.delRuleIfAddrValid(done, fromAddr4, wc, msg, b); err != nil {
+			if err := p.delRuleIfAddrValid(done, fromAddr4, c); err != nil {
 				p.logger.Error("Failed to delete old IPv4 rule",
 					tslog.Addr("addr", fromAddr4),
 					tslog.Err(err),
@@ -630,7 +610,7 @@ func (p *producer) handleRuleUpdates(done <-chan struct{}, ruleAddrUpdateCh <-ch
 			}
 
 			// Add a new rule if there's a new address.
-			if err := p.addRuleIfAddrValid(done, update.addr4, wc, msg, b); err != nil {
+			if err := p.addRuleIfAddrValid(done, update.addr4, c); err != nil {
 				p.logger.Error("Failed to add new IPv4 rule",
 					tslog.Addr("addr", update.addr4),
 					tslog.Err(err),
@@ -642,7 +622,7 @@ func (p *producer) handleRuleUpdates(done <-chan struct{}, ruleAddrUpdateCh <-ch
 
 		if update.addr6updated {
 			// Delete the old rule if it exists.
-			if err := p.delRuleIfAddrValid(done, fromAddr6, wc, msg, b); err != nil {
+			if err := p.delRuleIfAddrValid(done, fromAddr6, c); err != nil {
 				p.logger.Error("Failed to delete old IPv6 rule",
 					tslog.Addr("addr", fromAddr6),
 					tslog.Err(err),
@@ -650,7 +630,7 @@ func (p *producer) handleRuleUpdates(done <-chan struct{}, ruleAddrUpdateCh <-ch
 			}
 
 			// Add a new rule if there's a new address.
-			if err := p.addRuleIfAddrValid(done, update.addr6, wc, msg, b); err != nil {
+			if err := p.addRuleIfAddrValid(done, update.addr6, c); err != nil {
 				p.logger.Error("Failed to add new IPv6 rule",
 					tslog.Addr("addr", update.addr6),
 					tslog.Err(err),
@@ -662,14 +642,14 @@ func (p *producer) handleRuleUpdates(done <-chan struct{}, ruleAddrUpdateCh <-ch
 	}
 
 	// Delete the rules on exit.
-	if err := p.delRuleIfAddrValid(done, fromAddr4, wc, msg, b); err != nil {
+	if err := p.delRuleIfAddrValid(done, fromAddr4, c); err != nil {
 		p.logger.Error("Failed to delete IPv4 rule on exit",
 			tslog.Addr("addr", fromAddr4),
 			tslog.Err(err),
 		)
 	}
 
-	if err := p.delRuleIfAddrValid(done, fromAddr6, wc, msg, b); err != nil {
+	if err := p.delRuleIfAddrValid(done, fromAddr6, c); err != nil {
 		p.logger.Error("Failed to delete IPv6 rule on exit",
 			tslog.Addr("addr", fromAddr6),
 			tslog.Err(err),
@@ -677,16 +657,13 @@ func (p *producer) handleRuleUpdates(done <-chan struct{}, ruleAddrUpdateCh <-ch
 	}
 }
 
-func (p *producer) sendAndWait(
-	done <-chan struct{},
-	wc *rtnetlink.WConn,
-	msg *unix.Msghdr,
-	b []byte,
-	putRequest func([]byte, uint32, *unix.Msghdr),
-) error {
+func (p *producer) newSeq() uint32 {
 	p.seq++
-	putRequest(b, p.seq, msg)
-	if _, err := wc.WriteMsg(msg, 0); err != nil {
+	return p.seq
+}
+
+func (p *producer) sendAndWait(done <-chan struct{}, c *rtnetlink.Conn, b []byte) error {
+	if _, err := c.Write(b); err != nil {
 		return err
 	}
 
@@ -714,27 +691,22 @@ type linkRequest struct {
 	Message unix.IfInfomsg
 }
 
-func putLinkRequest(b []byte, seq uint32, msg *unix.Msghdr) {
+func (p *producer) getLinkDump(done <-chan struct{}, c *rtnetlink.Conn) error {
 	const msgLen = unix.SizeofNlMsghdr + unix.SizeofIfInfomsg
-	reqBuf := b[:msgLen]
-	req := (*linkRequest)(unsafe.Pointer(unsafe.SliceData(reqBuf)))
-	*req = linkRequest{
+	req := linkRequest{
 		Header: unix.NlMsghdr{
 			Len:   msgLen,
 			Type:  unix.RTM_GETLINK,
 			Flags: unix.NLM_F_REQUEST | unix.NLM_F_ACK | unix.NLM_F_DUMP,
-			Seq:   seq,
+			Seq:   p.newSeq(),
 		},
 		Message: unix.IfInfomsg{
 			Family: unix.AF_UNSPEC,
 			Type:   unix.ARPHRD_NETROM,
 		},
 	}
-	msg.Iov.Len = msgLen
-}
-
-func (p *producer) getLinkDump(done <-chan struct{}, wc *rtnetlink.WConn, msg *unix.Msghdr, b []byte) error {
-	return p.sendAndWait(done, wc, msg, b, putLinkRequest)
+	b := unsafe.Slice((*byte)(unsafe.Pointer(&req)), msgLen)
+	return p.sendAndWait(done, c, b)
 }
 
 type addrRequest struct {
@@ -742,27 +714,22 @@ type addrRequest struct {
 	Message unix.IfAddrmsg
 }
 
-func putAddrRequest(b []byte, seq uint32, msg *unix.Msghdr) {
+func (p *producer) getAddrDump(done <-chan struct{}, c *rtnetlink.Conn) error {
 	const msgLen = unix.SizeofNlMsghdr + unix.SizeofIfAddrmsg
-	reqBuf := b[:msgLen]
-	req := (*addrRequest)(unsafe.Pointer(unsafe.SliceData(reqBuf)))
-	*req = addrRequest{
+	req := addrRequest{
 		Header: unix.NlMsghdr{
 			Len:   msgLen,
 			Type:  unix.RTM_GETADDR,
 			Flags: unix.NLM_F_REQUEST | unix.NLM_F_ACK | unix.NLM_F_DUMP,
-			Seq:   seq,
+			Seq:   p.newSeq(),
 		},
 		Message: unix.IfAddrmsg{
 			Family: unix.AF_UNSPEC,
 			Scope:  unix.RT_SCOPE_UNIVERSE,
 		},
 	}
-	msg.Iov.Len = msgLen
-}
-
-func (p *producer) getAddrDump(done <-chan struct{}, wc *rtnetlink.WConn, msg *unix.Msghdr, b []byte) error {
-	return p.sendAndWait(done, wc, msg, b, putAddrRequest)
+	b := unsafe.Slice((*byte)(unsafe.Pointer(&req)), msgLen)
+	return p.sendAndWait(done, c, b)
 }
 
 type ruleRequest struct {
@@ -772,7 +739,7 @@ type ruleRequest struct {
 	FraSrcAddr   [16]byte
 }
 
-func putRuleRequest(addr netip.Addr, b []byte, msgType, flags uint16, seq uint32, action uint8, msg *unix.Msghdr) {
+func putRuleRequest(req *ruleRequest, addr netip.Addr, msgType, flags uint16, seq uint32, action uint8) {
 	var (
 		family        uint8
 		addrBitlen    uint8
@@ -795,8 +762,6 @@ func putRuleRequest(addr netip.Addr, b []byte, msgType, flags uint16, seq uint32
 		addrBytes = addr.As16()
 	}
 
-	reqBuf := b[:unix.SizeofNlMsghdr+unix.SizeofRtMsg+unix.SizeofRtAttr+16]
-	req := (*ruleRequest)(unsafe.Pointer(unsafe.SliceData(reqBuf)))
 	*req = ruleRequest{
 		Header: unix.NlMsghdr{
 			Len:   msgLen,
@@ -816,57 +781,48 @@ func putRuleRequest(addr netip.Addr, b []byte, msgType, flags uint16, seq uint32
 		},
 		FraSrcAddr: addrBytes,
 	}
-	msg.Iov.Len = uint64(msgLen)
 }
 
-func putAddRuleRequest(addr netip.Addr, b []byte, seq uint32, msg *unix.Msghdr) {
+func (p *producer) addRule(done <-chan struct{}, addr netip.Addr, c *rtnetlink.Conn) error {
+	var req ruleRequest
 	putRuleRequest(
+		&req,
 		addr,
-		b,
 		unix.RTM_NEWRULE,
 		// NLM_F_EXCL and NLM_F_CREATE don't seem to have any effect here.
 		// But we specify them anyway to be consistent with iproute2.
 		unix.NLM_F_REQUEST|unix.NLM_F_ACK|unix.NLM_F_EXCL|unix.NLM_F_CREATE,
-		seq,
+		p.newSeq(),
 		unix.FR_ACT_TO_TBL,
-		msg,
 	)
+	b := unsafe.Slice((*byte)(unsafe.Pointer(&req)), req.Header.Len)
+	return p.sendAndWait(done, c, b)
 }
 
-func putDelRuleRequest(addr netip.Addr, b []byte, seq uint32, msg *unix.Msghdr) {
+func (p *producer) delRule(done <-chan struct{}, addr netip.Addr, c *rtnetlink.Conn) error {
+	var req ruleRequest
 	putRuleRequest(
+		&req,
 		addr,
-		b,
 		unix.RTM_DELRULE,
 		unix.NLM_F_REQUEST|unix.NLM_F_ACK,
-		seq,
+		p.newSeq(),
 		unix.FR_ACT_UNSPEC,
-		msg,
 	)
+	b := unsafe.Slice((*byte)(unsafe.Pointer(&req)), req.Header.Len)
+	return p.sendAndWait(done, c, b)
 }
 
-func (p *producer) addRule(done <-chan struct{}, addr netip.Addr, wc *rtnetlink.WConn, msg *unix.Msghdr, b []byte) error {
-	return p.sendAndWait(done, wc, msg, b, func(b []byte, seq uint32, msg *unix.Msghdr) {
-		putAddRuleRequest(addr, b, seq, msg)
-	})
-}
-
-func (p *producer) delRule(done <-chan struct{}, addr netip.Addr, wc *rtnetlink.WConn, msg *unix.Msghdr, b []byte) error {
-	return p.sendAndWait(done, wc, msg, b, func(b []byte, seq uint32, msg *unix.Msghdr) {
-		putDelRuleRequest(addr, b, seq, msg)
-	})
-}
-
-func (p *producer) addRuleIfAddrValid(done <-chan struct{}, addr netip.Addr, wc *rtnetlink.WConn, msg *unix.Msghdr, b []byte) error {
+func (p *producer) addRuleIfAddrValid(done <-chan struct{}, addr netip.Addr, c *rtnetlink.Conn) error {
 	if addr.IsValid() {
-		return p.addRule(done, addr, wc, msg, b)
+		return p.addRule(done, addr, c)
 	}
 	return nil
 }
 
-func (p *producer) delRuleIfAddrValid(done <-chan struct{}, addr netip.Addr, wc *rtnetlink.WConn, msg *unix.Msghdr, b []byte) error {
+func (p *producer) delRuleIfAddrValid(done <-chan struct{}, addr netip.Addr, c *rtnetlink.Conn) error {
 	if addr.IsValid() {
-		return p.delRule(done, addr, wc, msg, b)
+		return p.delRule(done, addr, c)
 	}
 	return nil
 }

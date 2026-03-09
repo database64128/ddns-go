@@ -41,6 +41,16 @@ func Open(groups uint32) (*Conn, error) {
 	}, nil
 }
 
+// Read reads a netlink message from the connection.
+func (c *Conn) Read(b []byte) (n int, err error) {
+	return c.file.Read(b)
+}
+
+// Write writes a netlink message to the connection.
+func (c *Conn) Write(b []byte) (n int, err error) {
+	return c.file.Write(b)
+}
+
 // Close closes the netlink connection.
 func (c *Conn) Close() error {
 	return c.file.Close()
