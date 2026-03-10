@@ -50,12 +50,6 @@ func main() {
 		return
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-ctx.Done()
-		stop()
-	}()
-
 	logCfg := tslog.Config{
 		Level:          logLevel,
 		NoColor:        logNoColor,
@@ -96,6 +90,11 @@ func main() {
 		logger.Info("Configuration file is valid")
 		return
 	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	_ = context.AfterFunc(ctx, func() {
+		stop()
+	})
 
 	svc.Run(ctx)
 }

@@ -164,6 +164,8 @@ type mibNotification struct {
 }
 
 type producer struct {
+	wg                         sync.WaitGroup
+	notifyCh                   chan<- mibNotification
 	pinner                     runtime.Pinner
 	logger                     *tslog.Logger
 	initialNotificationHandled bool
@@ -193,16 +195,19 @@ var notifyUnicastIpAddressChangeCallback = sync.OnceValue(func() uintptr {
 })
 
 func (p *producer) run(ctx context.Context) {
-	var wg sync.WaitGroup
-	defer wg.Wait()
-
 	notifyCh := make(chan mibNotification)
-	defer close(notifyCh)
+	p.notifyCh = notifyCh
+	p.pinner.Pin(&p.notifyCh)
+	defer func() {
+		p.pinner.Unpin()
+		close(p.notifyCh)
+		p.wg.Wait()
+	}()
 
 	// Spin up the consumer goroutine before calling NotifyUnicastIpAddressChange,
 	// because NotifyUnicastIpAddressChange sends initial notifications and blocks
 	// until the callback calls return.
-	wg.Go(func() {
+	p.wg.Go(func() {
 		p.initialNotificationHandled = false
 
 		for nmsg := range notifyCh {
@@ -233,15 +238,12 @@ func (p *producer) run(ctx context.Context) {
 		}
 	})
 
-	p.pinner.Pin(&notifyCh)
-	defer p.pinner.Unpin()
-
 	var notificationHandle windows.Handle
 
 	if err := windows.NotifyUnicastIpAddressChange(
 		windows.AF_UNSPEC,
 		notifyUnicastIpAddressChangeCallback(),
-		unsafe.Pointer(&notifyCh),
+		unsafe.Pointer(&p.notifyCh),
 		true,
 		&notificationHandle,
 	); err != nil {

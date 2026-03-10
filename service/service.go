@@ -135,6 +135,7 @@ func (cfg *Config) NewService(logger *tslog.Logger) (*Service, error) {
 
 // Service is the DDNS service.
 type Service struct {
+	wg                    sync.WaitGroup
 	logger                *tslog.Logger
 	startupDelay          time.Duration
 	domainManagerByDomain map[string]*DomainManager
@@ -153,25 +154,24 @@ func (s *Service) Run(ctx context.Context) {
 		}
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(len(s.domainManagerByDomain) + len(s.producerByName))
+	s.wg.Add(len(s.domainManagerByDomain) + len(s.producerByName))
 
 	for _, dm := range s.domainManagerByDomain {
 		go func() {
-			defer wg.Done()
+			defer s.wg.Done()
 			dm.Run(ctx)
 		}()
 	}
 
 	for _, producer := range s.producerByName {
 		go func() {
-			defer wg.Done()
+			defer s.wg.Done()
 			producer.Run(ctx)
 		}()
 	}
 
 	s.logger.Info("Service started")
-	wg.Wait()
+	s.wg.Wait()
 	s.logger.Info("Service stopped")
 }
 

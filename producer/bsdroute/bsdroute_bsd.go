@@ -224,14 +224,11 @@ func (p *producer) run(ctx context.Context) {
 
 	p.handleAndBroadcast(ioctlFd, b)
 
-	if ctxDone := ctx.Done(); ctxDone != nil {
-		go func() {
-			<-ctxDone
-			if err := f.SetReadDeadline(aLongTimeAgo); err != nil {
-				p.logger.Error("Failed to set read deadline on routing socket", tslog.Err(err))
-			}
-		}()
-	}
+	_ = context.AfterFunc(ctx, func() {
+		if err := f.SetReadDeadline(aLongTimeAgo); err != nil {
+			p.logger.Error("Failed to set read deadline on routing socket", tslog.Err(err))
+		}
+	})
 
 	p.monitorRoutingSocket(f, ioctlFd)
 
