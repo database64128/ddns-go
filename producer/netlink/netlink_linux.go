@@ -36,6 +36,8 @@ func (cfg *ProducerConfig) newProducer(logger *tslog.Logger) (*Producer, error) 
 type producer struct {
 	logger             *tslog.Logger
 	broadcaster        *broadcaster.Broadcaster
+	wg                 sync.WaitGroup
+	reqCh              chan request
 	respCh             chan response
 	ifname             string
 	fromAddrLookupMain bool
@@ -43,6 +45,14 @@ type producer struct {
 	ifindex            uint32
 	addr4              netip.Addr
 	addr6              netip.Addr
+}
+
+type request struct {
+	addr4        netip.Addr
+	addr6        netip.Addr
+	syncState    bool
+	addr4Updated bool
+	addr6Updated bool
 }
 
 type response struct {
@@ -68,53 +78,27 @@ func (p *producer) run(ctx context.Context) {
 	p.logger.Info("Started monitoring network interface", slog.String("interface", p.ifname))
 
 	done := ctx.Done()
-	go func() {
-		<-done
+	_ = context.AfterFunc(ctx, func() {
 		// We MUST NOT set a write deadline, as it will cause the rule removal on exit to fail.
 		if err := c.SetReadDeadline(aLongTimeAgo); err != nil {
 			p.logger.Error("Failed to set deadline on netlink connection", tslog.Err(err))
 		}
-	}()
-
-	var ruleAddrUpdateCh chan addrUpdate
-	if p.fromAddrLookupMain {
-		ruleAddrUpdateCh = make(chan addrUpdate, 1)
-	}
-
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		p.readAndHandle(c.NewRConn(), ruleAddrUpdateCh)
 	})
 
-	if err = p.getLinkDump(done, c); err != nil {
-		p.logger.Error("Failed to get RTM_GETLINK dump", tslog.Err(err))
-	}
+	p.reqCh = make(chan request)
+	p.wg.Go(func() {
+		p.handleStateChanges(done, c)
+	})
+	p.reqCh <- request{syncState: true}
+	p.readAndHandle(done, c.NewRConn())
 
-	if err = p.getAddrDump(done, c); err != nil {
-		p.logger.Error("Failed to get RTM_GETADDR dump", tslog.Err(err))
-	}
-
-	if ruleAddrUpdateCh != nil {
-		p.handleRuleUpdates(done, ruleAddrUpdateCh, c)
-	}
-
-	wg.Wait()
+	close(p.reqCh)
+	p.wg.Wait()
 
 	p.logger.Info("Stopped monitoring network interface", slog.String("interface", p.ifname))
 }
 
-type addrUpdate struct {
-	addr4        netip.Addr
-	addr6        netip.Addr
-	addr4updated bool
-	addr6updated bool
-}
-
-func (p *producer) readAndHandle(rc *rtnetlink.RConn, ruleAddrUpdateCh chan<- addrUpdate) {
-	if ruleAddrUpdateCh != nil {
-		defer close(ruleAddrUpdateCh)
-	}
-
+func (p *producer) readAndHandle(done <-chan struct{}, rc *rtnetlink.RConn) {
 	var rsa unix.RawSockaddrNetlink
 	const readBufSize = 32 * 1024
 	rb := make([]byte, readBufSize)
@@ -132,6 +116,16 @@ func (p *producer) readAndHandle(rc *rtnetlink.RConn, ruleAddrUpdateCh chan<- ad
 	for {
 		n, err := rc.ReadMsg(&rmsg, 0)
 		if err != nil {
+			if se, ok := errors.AsType[*os.SyscallError](err); ok && se.Err == syscall.ENOBUFS {
+				p.logger.Warn("Netlink socket receive buffer ran out, resyncing state in 5 seconds")
+				select {
+				case <-done:
+					return
+				case <-time.After(5 * time.Second):
+				}
+				p.reqCh <- request{syncState: true}
+				continue
+			}
 			if errors.Is(err, os.ErrDeadlineExceeded) {
 				break
 			}
@@ -165,12 +159,12 @@ func (p *producer) readAndHandle(rc *rtnetlink.RConn, ruleAddrUpdateCh chan<- ad
 			IPv6: p.addr6,
 		})
 
-		if ruleAddrUpdateCh != nil {
-			ruleAddrUpdateCh <- addrUpdate{
+		if p.fromAddrLookupMain {
+			p.reqCh <- request{
 				addr4:        p.addr4,
 				addr6:        p.addr6,
-				addr4updated: addr4updated,
-				addr6updated: addr6updated,
+				addr4Updated: addr4updated,
+				addr6Updated: addr6updated,
 			}
 		}
 	}
@@ -593,14 +587,24 @@ func (p *producer) handleIfaAttrs(b []byte) (addr netip.Addr, label string, cach
 	return
 }
 
-func (p *producer) handleRuleUpdates(done <-chan struct{}, ruleAddrUpdateCh <-chan addrUpdate, c *rtnetlink.Conn) {
+func (p *producer) handleStateChanges(done <-chan struct{}, c *rtnetlink.Conn) {
 	var (
 		fromAddr4 netip.Addr
 		fromAddr6 netip.Addr
 	)
 
-	for update := range ruleAddrUpdateCh {
-		if update.addr4updated {
+	for req := range p.reqCh {
+		if req.syncState {
+			if err := p.getLinkDump(done, c); err != nil {
+				p.logger.Error("Failed to get RTM_GETLINK dump", tslog.Err(err))
+			}
+
+			if err := p.getAddrDump(done, c); err != nil {
+				p.logger.Error("Failed to get RTM_GETADDR dump", tslog.Err(err))
+			}
+		}
+
+		if req.addr4Updated {
 			// Delete the old rule if it exists.
 			if err := p.delRuleIfAddrValid(done, fromAddr4, c); err != nil {
 				p.logger.Error("Failed to delete old IPv4 rule",
@@ -610,17 +614,17 @@ func (p *producer) handleRuleUpdates(done <-chan struct{}, ruleAddrUpdateCh <-ch
 			}
 
 			// Add a new rule if there's a new address.
-			if err := p.addRuleIfAddrValid(done, update.addr4, c); err != nil {
+			if err := p.addRuleIfAddrValid(done, req.addr4, c); err != nil {
 				p.logger.Error("Failed to add new IPv4 rule",
-					tslog.Addr("addr", update.addr4),
+					tslog.Addr("addr", req.addr4),
 					tslog.Err(err),
 				)
 			}
 
-			fromAddr4 = update.addr4
+			fromAddr4 = req.addr4
 		}
 
-		if update.addr6updated {
+		if req.addr6Updated {
 			// Delete the old rule if it exists.
 			if err := p.delRuleIfAddrValid(done, fromAddr6, c); err != nil {
 				p.logger.Error("Failed to delete old IPv6 rule",
@@ -630,14 +634,14 @@ func (p *producer) handleRuleUpdates(done <-chan struct{}, ruleAddrUpdateCh <-ch
 			}
 
 			// Add a new rule if there's a new address.
-			if err := p.addRuleIfAddrValid(done, update.addr6, c); err != nil {
+			if err := p.addRuleIfAddrValid(done, req.addr6, c); err != nil {
 				p.logger.Error("Failed to add new IPv6 rule",
-					tslog.Addr("addr", update.addr6),
+					tslog.Addr("addr", req.addr6),
 					tslog.Err(err),
 				)
 			}
 
-			fromAddr6 = update.addr6
+			fromAddr6 = req.addr6
 		}
 	}
 
