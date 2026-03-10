@@ -657,12 +657,10 @@ func (p *producer) handleRuleUpdates(done <-chan struct{}, ruleAddrUpdateCh <-ch
 	}
 }
 
-func (p *producer) newSeq() uint32 {
+func (p *producer) sendAndWait(done <-chan struct{}, c *rtnetlink.Conn, nlh *unix.NlMsghdr) error {
 	p.seq++
-	return p.seq
-}
-
-func (p *producer) sendAndWait(done <-chan struct{}, c *rtnetlink.Conn, b []byte) error {
+	nlh.Seq = p.seq
+	b := unsafe.Slice((*byte)(unsafe.Pointer(nlh)), nlh.Len)
 	if _, err := c.Write(b); err != nil {
 		return err
 	}
@@ -671,9 +669,9 @@ func (p *producer) sendAndWait(done <-chan struct{}, c *rtnetlink.Conn, b []byte
 	case <-done:
 		return nil
 	case resp := <-p.respCh:
-		if resp.seq != p.seq {
+		if resp.seq != nlh.Seq {
 			p.logger.Error("Received response with unexpected sequence number",
-				tslog.Uint("reqSeq", p.seq),
+				tslog.Uint("reqSeq", nlh.Seq),
 				tslog.Uint("respSeq", resp.seq),
 				tslog.Int("respErr", resp.err),
 			)
@@ -698,15 +696,13 @@ func (p *producer) getLinkDump(done <-chan struct{}, c *rtnetlink.Conn) error {
 			Len:   msgLen,
 			Type:  unix.RTM_GETLINK,
 			Flags: unix.NLM_F_REQUEST | unix.NLM_F_ACK | unix.NLM_F_DUMP,
-			Seq:   p.newSeq(),
 		},
 		Message: unix.IfInfomsg{
 			Family: unix.AF_UNSPEC,
 			Type:   unix.ARPHRD_NETROM,
 		},
 	}
-	b := unsafe.Slice((*byte)(unsafe.Pointer(&req)), msgLen)
-	return p.sendAndWait(done, c, b)
+	return p.sendAndWait(done, c, &req.Header)
 }
 
 type addrRequest struct {
@@ -721,15 +717,13 @@ func (p *producer) getAddrDump(done <-chan struct{}, c *rtnetlink.Conn) error {
 			Len:   msgLen,
 			Type:  unix.RTM_GETADDR,
 			Flags: unix.NLM_F_REQUEST | unix.NLM_F_ACK | unix.NLM_F_DUMP,
-			Seq:   p.newSeq(),
 		},
 		Message: unix.IfAddrmsg{
 			Family: unix.AF_UNSPEC,
 			Scope:  unix.RT_SCOPE_UNIVERSE,
 		},
 	}
-	b := unsafe.Slice((*byte)(unsafe.Pointer(&req)), msgLen)
-	return p.sendAndWait(done, c, b)
+	return p.sendAndWait(done, c, &req.Header)
 }
 
 type ruleRequest struct {
@@ -739,7 +733,7 @@ type ruleRequest struct {
 	FraSrcAddr   [16]byte
 }
 
-func putRuleRequest(req *ruleRequest, addr netip.Addr, msgType, flags uint16, seq uint32, action uint8) {
+func putRuleRequest(req *ruleRequest, addr netip.Addr, msgType, flags uint16, action uint8) {
 	var (
 		family        uint8
 		addrBitlen    uint8
@@ -767,7 +761,6 @@ func putRuleRequest(req *ruleRequest, addr netip.Addr, msgType, flags uint16, se
 			Len:   msgLen,
 			Type:  msgType,
 			Flags: flags,
-			Seq:   seq,
 		},
 		Message: unix.RtMsg{
 			Family:  family,
@@ -792,11 +785,9 @@ func (p *producer) addRule(done <-chan struct{}, addr netip.Addr, c *rtnetlink.C
 		// NLM_F_EXCL and NLM_F_CREATE don't seem to have any effect here.
 		// But we specify them anyway to be consistent with iproute2.
 		unix.NLM_F_REQUEST|unix.NLM_F_ACK|unix.NLM_F_EXCL|unix.NLM_F_CREATE,
-		p.newSeq(),
 		unix.FR_ACT_TO_TBL,
 	)
-	b := unsafe.Slice((*byte)(unsafe.Pointer(&req)), req.Header.Len)
-	return p.sendAndWait(done, c, b)
+	return p.sendAndWait(done, c, &req.Header)
 }
 
 func (p *producer) delRule(done <-chan struct{}, addr netip.Addr, c *rtnetlink.Conn) error {
@@ -806,11 +797,9 @@ func (p *producer) delRule(done <-chan struct{}, addr netip.Addr, c *rtnetlink.C
 		addr,
 		unix.RTM_DELRULE,
 		unix.NLM_F_REQUEST|unix.NLM_F_ACK,
-		p.newSeq(),
 		unix.FR_ACT_UNSPEC,
 	)
-	b := unsafe.Slice((*byte)(unsafe.Pointer(&req)), req.Header.Len)
-	return p.sendAndWait(done, c, b)
+	return p.sendAndWait(done, c, &req.Header)
 }
 
 func (p *producer) addRuleIfAddrValid(done <-chan struct{}, addr netip.Addr, c *rtnetlink.Conn) error {
