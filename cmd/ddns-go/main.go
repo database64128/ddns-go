@@ -61,7 +61,7 @@ func main() {
 	logger.Info("ddns-go", slog.String("version", ddnsgo.Version))
 
 	var cfg service.Config
-	if err := jsoncfg.Open(confPath, &cfg); err != nil {
+	if err := jsoncfg.Load(confPath, &cfg); err != nil {
 		logger.Error("Failed to load configuration",
 			slog.String("path", confPath),
 			tslog.Err(err),
