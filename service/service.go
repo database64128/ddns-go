@@ -52,7 +52,7 @@ func (cfg *Config) NewService(logger *tslog.Logger) (*Service, error) {
 		}
 
 		producerLogger := logger.WithAttrs(slog.String("source", sourceCfg.Name))
-		producer, err := sourceCfg.NewProducer(http.DefaultClient, producerLogger)
+		producer, err := sourceCfg.NewProducer(nil, producerLogger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create producer %q: %w", sourceCfg.Name, err)
 		}
@@ -69,7 +69,7 @@ func (cfg *Config) NewService(logger *tslog.Logger) (*Service, error) {
 			if accountCfg.BearerToken == "" {
 				return nil, fmt.Errorf("bearer token not specified for account %q", accountCfg.Name)
 			}
-			client := cloudflare.NewClient(http.DefaultClient, accountCfg.BearerToken)
+			client := cloudflare.NewClient(nil, accountCfg.BearerToken)
 			cfAPIClientByName[accountCfg.Name] = client
 		default:
 			return nil, fmt.Errorf("account %q has unknown type: %q", accountCfg.Name, accountCfg.Type)

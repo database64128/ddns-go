@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/netip"
 
@@ -20,11 +21,23 @@ type TextIPv4Source struct {
 
 // NewTextIPv4Source creates a new [TextIPv4Source].
 //
-//   - If client is nil, [http.DefaultClient] is used.
+//   - If client is nil, an internal IPv4-only HTTP client is used.
 //   - If url is empty, it defaults to "https://api.ipify.org/".
 func NewTextIPv4Source(client *http.Client, url string) *TextIPv4Source {
 	if client == nil {
-		client = http.DefaultClient
+		// Make a transport that forces IPv4.
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			switch network {
+			case "tcp":
+				network = "tcp4"
+			case "udp":
+				network = "udp4"
+			}
+			var dialer net.Dialer
+			return dialer.DialContext(ctx, network, addr)
+		}
+		client = &http.Client{Transport: transport}
 	}
 	if url == "" {
 		url = "https://api.ipify.org/"
@@ -57,11 +70,23 @@ type TextIPv6Source struct {
 
 // NewTextIPv6Source creates a new [TextIPv6Source].
 //
-//   - If client is nil, [http.DefaultClient] is used.
+//   - If client is nil, an internal IPv6-only HTTP client is used.
 //   - If url is empty, it defaults to "https://api6.ipify.org/".
 func NewTextIPv6Source(client *http.Client, url string) *TextIPv6Source {
 	if client == nil {
-		client = http.DefaultClient
+		// Make a transport that forces IPv6.
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			switch network {
+			case "tcp":
+				network = "tcp6"
+			case "udp":
+				network = "udp6"
+			}
+			var dialer net.Dialer
+			return dialer.DialContext(ctx, network, addr)
+		}
+		client = &http.Client{Transport: transport}
 	}
 	if url == "" {
 		url = "https://api6.ipify.org/"
