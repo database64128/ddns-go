@@ -1,6 +1,7 @@
 package ipapi
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -110,6 +111,8 @@ func (s *textSource) get(ctx context.Context) (netip.Addr, error) {
 	if err != nil {
 		return netip.Addr{}, fmt.Errorf("failed to read response body: %w", err)
 	}
+
+	body = bytes.TrimSpace(body)
 
 	addr, err := netip.ParseAddr(string(body))
 	if err != nil {
