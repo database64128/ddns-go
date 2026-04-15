@@ -42,6 +42,8 @@
             "type": "netlink",
             "iface": {
                 "interface": "enp5s0",
+                "socket_send_buffer_size": 0,
+                "socket_receive_buffer_size": 0,
                 "from_addr_lookup_main": false
             }
         },

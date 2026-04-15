@@ -26,6 +26,16 @@ type ProducerConfig struct {
 	// Interface is the name of the network interface to monitor.
 	Interface string `json:"interface"`
 
+	// SocketSendBufferSize specifies the send buffer size of the netlink socket in bytes.
+	//
+	// If zero, it defaults to 32 KiB.
+	SocketSendBufferSize int `json:"socket_send_buffer_size,omitzero"`
+
+	// SocketReceiveBufferSize specifies the receive buffer size of the netlink socket in bytes.
+	//
+	// If zero, it defaults to 1 MiB.
+	SocketReceiveBufferSize int `json:"socket_receive_buffer_size,omitzero"`
+
 	// FromAddrLookupMain controls whether to add policy routing rules to let
 	// packets originating from the interface addresses use the main routing table.
 	//

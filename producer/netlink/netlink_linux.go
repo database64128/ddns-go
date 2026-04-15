@@ -28,6 +28,8 @@ func (cfg *ProducerConfig) newProducer(logger *tslog.Logger) (*Producer, error) 
 			broadcaster:        broadcaster.New(),
 			respCh:             make(chan response),
 			ifname:             cfg.Interface,
+			sendBufferSize:     cfg.SocketSendBufferSize,
+			receiveBufferSize:  cfg.SocketReceiveBufferSize,
 			fromAddrLookupMain: cfg.FromAddrLookupMain,
 		},
 	}, nil
@@ -40,6 +42,8 @@ type producer struct {
 	reqCh              chan request
 	respCh             chan response
 	ifname             string
+	sendBufferSize     int
+	receiveBufferSize  int
 	fromAddrLookupMain bool
 	seq                uint32
 	ifindex            uint32
@@ -68,7 +72,11 @@ func (p *producer) subscribe() <-chan producerpkg.Message {
 var aLongTimeAgo = time.Unix(0, 0)
 
 func (p *producer) run(ctx context.Context) {
-	c, err := rtnetlink.Open(unix.RTMGRP_LINK | unix.RTMGRP_IPV4_IFADDR | unix.RTMGRP_IPV6_IFADDR)
+	opts := rtnetlink.SocketOptions{
+		SendBufferSize:    p.sendBufferSize,
+		ReceiveBufferSize: p.receiveBufferSize,
+	}
+	c, err := opts.Open(unix.RTMGRP_LINK | unix.RTMGRP_IPV4_IFADDR | unix.RTMGRP_IPV6_IFADDR)
 	if err != nil {
 		p.logger.Error("Failed to open netlink connection", tslog.Err(err))
 		return

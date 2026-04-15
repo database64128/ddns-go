@@ -9,6 +9,24 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const (
+	DefaultSocketSendBufferSize    = 32 * 1024   // 32 KiB
+	DefaultSocketReceiveBufferSize = 1024 * 1024 // 1 MiB
+)
+
+// SocketOptions specifies the options for creating a netlink socket.
+type SocketOptions struct {
+	// SendBufferSize specifies the send buffer size of the socket in bytes.
+	//
+	// If zero, it defaults to [DefaultSocketSendBufferSize].
+	SendBufferSize int
+
+	// ReceiveBufferSize specifies the receive buffer size of the socket in bytes.
+	//
+	// If zero, it defaults to [DefaultSocketReceiveBufferSize].
+	ReceiveBufferSize int
+}
+
 // Conn is a netlink connection.
 type Conn struct {
 	file    *os.File
@@ -16,13 +34,13 @@ type Conn struct {
 }
 
 // Open opens a netlink connection.
-func Open(groups uint32) (*Conn, error) {
+func (opts SocketOptions) Open(groups uint32) (*Conn, error) {
 	fd, err := unix.Socket(unix.AF_NETLINK, unix.SOCK_RAW|unix.SOCK_NONBLOCK|unix.SOCK_CLOEXEC, unix.NETLINK_ROUTE)
 	if err != nil {
 		return nil, os.NewSyscallError("socket", err)
 	}
 
-	if err = setupSocket(fd, groups); err != nil {
+	if err := opts.setupSocket(fd, groups); err != nil {
 		_ = unix.Close(fd)
 		return nil, err
 	}
@@ -163,14 +181,20 @@ func (wc *WConn) WriteMsg(msg *unix.Msghdr, flags int) (n int, err error) {
 	return wc.writeN, wc.writeErr
 }
 
-func setupSocket(fd int, groups uint32) error {
-	// Set send buffer size to 32 KiB.
-	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_SNDBUF, 32*1024); err != nil {
+func (opts SocketOptions) setupSocket(fd int, groups uint32) error {
+	sendBufferSize := opts.SendBufferSize
+	if sendBufferSize == 0 {
+		sendBufferSize = DefaultSocketSendBufferSize
+	}
+	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_SNDBUF, sendBufferSize); err != nil {
 		return os.NewSyscallError("setsockopt(SO_SNDBUF)", err)
 	}
 
-	// Set receive buffer size to 1 MiB.
-	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_RCVBUF, 1024*1024); err != nil {
+	receiveBufferSize := opts.ReceiveBufferSize
+	if receiveBufferSize == 0 {
+		receiveBufferSize = DefaultSocketReceiveBufferSize
+	}
+	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_RCVBUF, receiveBufferSize); err != nil {
 		return os.NewSyscallError("setsockopt(SO_RCVBUF)", err)
 	}
 
