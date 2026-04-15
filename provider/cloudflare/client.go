@@ -26,7 +26,12 @@ type Client struct {
 }
 
 // NewClient creates a new [Client] with the given HTTP client and API token.
+//
+// If client is nil, [http.DefaultClient] is used.
 func NewClient(client *http.Client, token string) *Client {
+	if client == nil {
+		client = http.DefaultClient
+	}
 	return &Client{
 		client:              client,
 		authorizationHeader: "Bearer " + token,
