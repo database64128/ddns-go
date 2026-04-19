@@ -17,6 +17,7 @@
             "ipapi": {
                 "source": "text-ipv4",
                 "url": "https://api.ipify.org/",
+                "user_agent": "",
                 "poll_interval": "5m"
             }
         },
@@ -26,6 +27,7 @@
             "ipapi": {
                 "source": "text-ipv6",
                 "url": "https://api6.ipify.org/",
+                "user_agent": "",
                 "poll_interval": "5m"
             }
         },

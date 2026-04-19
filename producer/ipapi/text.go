@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/netip"
 
+	ddnsgo "github.com/database64128/ddns-go"
 	"github.com/database64128/ddns-go/producer"
 )
 
@@ -23,7 +24,8 @@ type TextIPv4Source struct {
 //
 //   - If client is nil, an internal IPv4-only HTTP client is used.
 //   - If url is empty, it defaults to "https://api.ipify.org/".
-func NewTextIPv4Source(client *http.Client, url string) *TextIPv4Source {
+//   - If userAgent is empty, it defaults to [defaultUserAgent].
+func NewTextIPv4Source(client *http.Client, url, userAgent string) *TextIPv4Source {
 	if client == nil {
 		// Make a transport that forces IPv4.
 		transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -42,7 +44,16 @@ func NewTextIPv4Source(client *http.Client, url string) *TextIPv4Source {
 	if url == "" {
 		url = "https://api.ipify.org/"
 	}
-	return &TextIPv4Source{textSource: textSource{client: client, url: url}}
+	if userAgent == "" {
+		userAgent = defaultUserAgent
+	}
+	return &TextIPv4Source{
+		textSource: textSource{
+			client:    client,
+			url:       url,
+			userAgent: userAgent,
+		},
+	}
 }
 
 var _ producer.Source = (*TextIPv4Source)(nil)
@@ -72,7 +83,8 @@ type TextIPv6Source struct {
 //
 //   - If client is nil, an internal IPv6-only HTTP client is used.
 //   - If url is empty, it defaults to "https://api6.ipify.org/".
-func NewTextIPv6Source(client *http.Client, url string) *TextIPv6Source {
+//   - If userAgent is empty, it defaults to [defaultUserAgent].
+func NewTextIPv6Source(client *http.Client, url, userAgent string) *TextIPv6Source {
 	if client == nil {
 		// Make a transport that forces IPv6.
 		transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -91,7 +103,16 @@ func NewTextIPv6Source(client *http.Client, url string) *TextIPv6Source {
 	if url == "" {
 		url = "https://api6.ipify.org/"
 	}
-	return &TextIPv6Source{textSource: textSource{client: client, url: url}}
+	if userAgent == "" {
+		userAgent = defaultUserAgent
+	}
+	return &TextIPv6Source{
+		textSource: textSource{
+			client:    client,
+			url:       url,
+			userAgent: userAgent,
+		},
+	}
 }
 
 var _ producer.Source = (*TextIPv6Source)(nil)
@@ -110,10 +131,13 @@ func (s *TextIPv6Source) Snapshot(ctx context.Context) (producer.Message, error)
 	return producer.Message{IPv6: addr}, nil
 }
 
+const defaultUserAgent = "cubic-ddns-go/" + ddnsgo.Version
+
 // textSource obtains the public IP address from a text-based IP address API.
 type textSource struct {
-	client *http.Client
-	url    string
+	client    *http.Client
+	url       string
+	userAgent string
 }
 
 // get retrieves the public IP address from the API.
@@ -122,6 +146,8 @@ func (s *textSource) get(ctx context.Context) (netip.Addr, error) {
 	if err != nil {
 		return netip.Addr{}, fmt.Errorf("failed to create request: %w", err)
 	}
+
+	req.Header["User-Agent"] = []string{s.userAgent}
 
 	resp, err := s.client.Do(req)
 	if err != nil {

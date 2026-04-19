@@ -24,6 +24,10 @@ type ProducerConfig struct {
 	// If empty, the source default is used.
 	URL string `json:"url,omitzero"`
 
+	// UserAgent is the User-Agent header value to use when making requests to the IP address API.
+	// If empty, it defaults to [defaultUserAgent].
+	UserAgent string `json:"user_agent,omitzero"`
+
 	// PollInterval is the interval between polling the IP address API.
 	// If not positive, it defaults to 5 minutes.
 	PollInterval jsoncfg.Duration `json:"poll_interval,omitzero"`
@@ -36,9 +40,9 @@ func (cfg *ProducerConfig) NewProducer(client *http.Client, logger *tslog.Logger
 	var source producer.Source
 	switch cfg.Source {
 	case "text-ipv4":
-		source = NewTextIPv4Source(client, cfg.URL)
+		source = NewTextIPv4Source(client, cfg.URL, cfg.UserAgent)
 	case "text-ipv6":
-		source = NewTextIPv6Source(client, cfg.URL)
+		source = NewTextIPv6Source(client, cfg.URL, cfg.UserAgent)
 	default:
 		return nil, fmt.Errorf("unknown source: %q", cfg.Source)
 	}
