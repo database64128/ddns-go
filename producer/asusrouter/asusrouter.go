@@ -89,8 +89,8 @@ func (s *Source) Snapshot(ctx context.Context) (producer.Message, error) {
 		return producer.Message{}, fmt.Errorf("failed to create login request: %w", err)
 	}
 
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Referer", s.loginReferer) // The request will fail without a Referer.
+	req.Header["Content-Type"] = []string{"application/x-www-form-urlencoded"}
+	req.Header["Referer"] = []string{s.loginReferer} // The request will fail without a Referer.
 
 	resp, err := s.client.Do(req)
 	if err != nil {

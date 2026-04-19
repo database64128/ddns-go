@@ -33,8 +33,8 @@ func (cfg *ProducerConfig) newProducer(logger *tslog.Logger) (*Producer, error) 
 		rulemgr = &ruleManager{
 			updateCh: make(chan addrUpdate),
 			conn: conn{
-				socketOptions: sockOpts,
 				logger:        logger,
+				socketOptions: sockOpts,
 				respCh:        make(chan response),
 			},
 		}
@@ -43,8 +43,8 @@ func (cfg *ProducerConfig) newProducer(logger *tslog.Logger) (*Producer, error) 
 	return &Producer{
 		producer: producer{
 			conn: conn{
-				socketOptions: sockOpts,
 				logger:        logger,
+				socketOptions: sockOpts,
 				respCh:        make(chan response),
 			},
 			broadcaster: broadcaster.New(),
@@ -68,8 +68,8 @@ type producer struct {
 }
 
 type conn struct {
-	socketOptions rtnetlink.SocketOptions
 	logger        *tslog.Logger
+	socketOptions rtnetlink.SocketOptions
 	respCh        chan response
 	nlConn        *rtnetlink.Conn
 	seq           uint32
@@ -797,23 +797,23 @@ func (m *ruleManager) handleAddrUpdates() {
 		switch update.kind {
 		case addrUpdateKindAdd:
 			if err := m.addRule(update.addr); err != nil {
-				m.logger.Error("Failed to add rule",
+				m.logger.Error("Failed to add policy routing rule",
 					tslog.Addr("addr", update.addr),
 					tslog.Err(err),
 				)
 				continue
 			}
-			m.logger.Info("Added rule", tslog.Addr("addr", update.addr))
+			m.logger.Info("Added policy routing rule", tslog.Addr("addr", update.addr))
 
 		case addrUpdateKindDelete:
 			if err := m.delRule(update.addr); err != nil {
-				m.logger.Error("Failed to delete rule",
+				m.logger.Error("Failed to delete policy routing rule",
 					tslog.Addr("addr", update.addr),
 					tslog.Err(err),
 				)
 				continue
 			}
-			m.logger.Info("Deleted rule", tslog.Addr("addr", update.addr))
+			m.logger.Info("Deleted policy routing rule", tslog.Addr("addr", update.addr))
 
 		default:
 			panic("unreachable")

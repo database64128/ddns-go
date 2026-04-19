@@ -36,7 +36,7 @@ func NewJSONRequest(ctx context.Context, method, url string, body any) (*http.Re
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Content-Type", "application/json")
+	req.Header["Content-Type"] = []string{"application/json"}
 	return req, nil
 }
 
@@ -49,6 +49,6 @@ func NewFormRequest(ctx context.Context, method, url string, values url.Values) 
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header["Content-Type"] = []string{"application/x-www-form-urlencoded"}
 	return req, nil
 }
