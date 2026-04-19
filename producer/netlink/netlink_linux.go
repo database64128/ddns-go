@@ -22,41 +22,66 @@ func (cfg *ProducerConfig) newProducer(logger *tslog.Logger) (*Producer, error) 
 	if cfg.Interface == "" {
 		return nil, errors.New("interface name is required")
 	}
+
+	sockOpts := rtnetlink.SocketOptions{
+		SendBufferSize:    cfg.SocketSendBufferSize,
+		ReceiveBufferSize: cfg.SocketReceiveBufferSize,
+	}
+
+	var rulemgr *ruleManager
+	if cfg.FromAddrLookupMain {
+		rulemgr = &ruleManager{
+			updateCh: make(chan addrUpdate),
+			conn: conn{
+				socketOptions: sockOpts,
+				logger:        logger,
+				respCh:        make(chan response),
+			},
+		}
+	}
+
 	return &Producer{
 		producer: producer{
-			logger:             logger,
-			broadcaster:        broadcaster.New(),
-			respCh:             make(chan response),
-			ifname:             cfg.Interface,
-			sendBufferSize:     cfg.SocketSendBufferSize,
-			receiveBufferSize:  cfg.SocketReceiveBufferSize,
-			fromAddrLookupMain: cfg.FromAddrLookupMain,
+			conn: conn{
+				socketOptions: sockOpts,
+				logger:        logger,
+				respCh:        make(chan response),
+			},
+			broadcaster: broadcaster.New(),
+			ruleManager: rulemgr,
+			resyncCh:    make(chan struct{}),
+			ifname:      cfg.Interface,
 		},
 	}, nil
 }
 
 type producer struct {
-	logger             *tslog.Logger
-	broadcaster        *broadcaster.Broadcaster
-	wg                 sync.WaitGroup
-	reqCh              chan request
-	respCh             chan response
-	ifname             string
-	sendBufferSize     int
-	receiveBufferSize  int
-	fromAddrLookupMain bool
-	seq                uint32
-	ifindex            uint32
-	addr4              netip.Addr
-	addr6              netip.Addr
+	conn
+	wg          sync.WaitGroup
+	broadcaster *broadcaster.Broadcaster
+	ruleManager *ruleManager
+	resyncCh    chan struct{}
+	ifname      string
+	ifindex     uint32
+	addr4       netip.Addr
+	addr6       netip.Addr
 }
 
-type request struct {
-	addr4        netip.Addr
-	addr6        netip.Addr
-	syncState    bool
-	addr4Updated bool
-	addr6Updated bool
+type conn struct {
+	socketOptions rtnetlink.SocketOptions
+	logger        *tslog.Logger
+	respCh        chan response
+	nlConn        *rtnetlink.Conn
+	seq           uint32
+}
+
+func (c *conn) openNlConn(groups uint32) (err error) {
+	c.nlConn, err = c.socketOptions.Open(groups)
+	return err
+}
+
+func (c *conn) closeNlConn() error {
+	return c.nlConn.Close()
 }
 
 type response struct {
@@ -72,43 +97,45 @@ func (p *producer) subscribe() <-chan producerpkg.Message {
 var aLongTimeAgo = time.Unix(0, 0)
 
 func (p *producer) run(ctx context.Context) {
-	opts := rtnetlink.SocketOptions{
-		SendBufferSize:    p.sendBufferSize,
-		ReceiveBufferSize: p.receiveBufferSize,
-	}
-	c, err := opts.Open(unix.RTMGRP_LINK | unix.RTMGRP_IPV4_IFADDR | unix.RTMGRP_IPV6_IFADDR)
-	if err != nil {
+	if err := p.openNlConn(unix.RTMGRP_LINK | unix.RTMGRP_IPV4_IFADDR | unix.RTMGRP_IPV6_IFADDR); err != nil {
 		p.logger.Error("Failed to open netlink connection", tslog.Err(err))
 		return
 	}
-	defer c.Close()
+	defer p.closeNlConn()
 
 	p.logger.Info("Started monitoring network interface", slog.String("interface", p.ifname))
 
-	done := ctx.Done()
 	_ = context.AfterFunc(ctx, func() {
-		// We MUST NOT set a write deadline, as it will cause the rule removal on exit to fail.
-		if err := c.SetReadDeadline(aLongTimeAgo); err != nil {
-			p.logger.Error("Failed to set deadline on netlink connection", tslog.Err(err))
+		if err := p.nlConn.SetReadDeadline(aLongTimeAgo); err != nil {
+			p.logger.Error("Failed to set read deadline on netlink connection", tslog.Err(err))
 		}
 	})
 
-	p.reqCh = make(chan request)
-	p.wg.Go(func() {
-		p.handleStateChanges(done, c)
-	})
-	p.reqCh <- request{syncState: true}
-	p.readAndHandle(done, c.NewRConn())
+	if p.ruleManager != nil {
+		p.wg.Go(func() {
+			p.ruleManager.Run(ctx, &p.wg)
+		})
+	}
 
-	close(p.reqCh)
+	p.wg.Go(func() {
+		p.readAndHandle(ctx)
+		close(p.respCh)   // unblock sendAndWait and thus handleStateSyncs
+		close(p.resyncCh) // unblock handleStateSyncs
+		if p.ruleManager != nil {
+			p.ruleManager.Stop()
+		}
+	})
+
+	p.handleStateSyncs()
 	p.wg.Wait()
 
 	p.logger.Info("Stopped monitoring network interface", slog.String("interface", p.ifname))
 }
 
-func (p *producer) readAndHandle(done <-chan struct{}, rc *rtnetlink.RConn) {
+const readBufSize = 32 * 1024
+
+func (p *producer) readAndHandle(ctx context.Context) {
 	var rsa unix.RawSockaddrNetlink
-	const readBufSize = 32 * 1024
 	rb := make([]byte, readBufSize)
 	riov := unix.Iovec{
 		Base: unsafe.SliceData(rb),
@@ -120,6 +147,7 @@ func (p *producer) readAndHandle(done <-chan struct{}, rc *rtnetlink.RConn) {
 		Iov:     &riov,
 		Iovlen:  1,
 	}
+	rc := p.nlConn.NewRConn()
 
 	for {
 		n, err := rc.ReadMsg(&rmsg, 0)
@@ -127,11 +155,11 @@ func (p *producer) readAndHandle(done <-chan struct{}, rc *rtnetlink.RConn) {
 			if se, ok := errors.AsType[*os.SyscallError](err); ok && se.Err == syscall.ENOBUFS {
 				p.logger.Warn("Netlink socket receive buffer ran out, resyncing state in 5 seconds")
 				select {
-				case <-done:
+				case <-ctx.Done():
 					return
 				case <-time.After(5 * time.Second):
 				}
-				p.reqCh <- request{syncState: true}
+				p.resyncCh <- struct{}{}
 				continue
 			}
 			if errors.Is(err, os.ErrDeadlineExceeded) {
@@ -166,15 +194,6 @@ func (p *producer) readAndHandle(done <-chan struct{}, rc *rtnetlink.RConn) {
 			IPv4: p.addr4,
 			IPv6: p.addr6,
 		})
-
-		if p.fromAddrLookupMain {
-			p.reqCh <- request{
-				addr4:        p.addr4,
-				addr6:        p.addr6,
-				addr4Updated: addr4updated,
-				addr6Updated: addr6updated,
-			}
-		}
 	}
 }
 
@@ -363,6 +382,9 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 						}
 						p.addr4 = addr
 						addr4updated = true
+						if p.ruleManager != nil {
+							p.ruleManager.NotifyAddAddr(addr)
+						}
 
 					case addr.Is6() && addr != p.addr6:
 						if p.logger.Enabled(slog.LevelDebug) {
@@ -373,6 +395,9 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 						}
 						p.addr6 = addr
 						addr6updated = true
+						if p.ruleManager != nil {
+							p.ruleManager.NotifyAddAddr(addr)
+						}
 					}
 
 				case unix.RTM_DELADDR:
@@ -385,6 +410,9 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 						}
 						p.addr4 = netip.Addr{}
 						addr4updated = true
+						if p.ruleManager != nil {
+							p.ruleManager.NotifyDelAddr(addr)
+						}
 
 					case p.addr6:
 						if p.logger.Enabled(slog.LevelDebug) {
@@ -394,6 +422,9 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 						}
 						p.addr6 = netip.Addr{}
 						addr6updated = true
+						if p.ruleManager != nil {
+							p.ruleManager.NotifyDelAddr(addr)
+						}
 					}
 				}
 
@@ -427,12 +458,12 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 	return
 }
 
-func (p *producer) handleNleAttrs(b []byte) (msg string) {
+func (c *conn) handleNleAttrs(b []byte) (msg string) {
 	for len(b) >= unix.SizeofNlAttr {
 		nla := (*unix.NlAttr)(unsafe.Pointer(unsafe.SliceData(b)))
 		nlaSize := rtnetlink.NlaAlign(nla.Len)
 		if nla.Len < unix.SizeofNlAttr || int(nlaSize) > len(b) {
-			p.logger.Error("Invalid netlink attribute length",
+			c.logger.Error("Invalid netlink attribute length",
 				tslog.Uint("nla_len", nla.Len),
 				tslog.Uint("nla_type", nla.Type),
 				tslog.Uint("nlaSize", nlaSize),
@@ -444,7 +475,7 @@ func (p *producer) handleNleAttrs(b []byte) (msg string) {
 		switch nla.Type {
 		case unix.NLMSGERR_ATTR_MSG:
 			if nla.Len < unix.SizeofNlAttr+1 {
-				p.logger.Error("Invalid NLMSGERR_ATTR_MSG attribute length",
+				c.logger.Error("Invalid NLMSGERR_ATTR_MSG attribute length",
 					tslog.Uint("nla_len", nla.Len),
 					tslog.Uint("nla_type", nla.Type),
 				)
@@ -454,13 +485,13 @@ func (p *producer) handleNleAttrs(b []byte) (msg string) {
 			msgBuf := b[unix.SizeofNlAttr : nla.Len-1] // -1 to exclude the null terminator
 			msg = unsafe.String(unsafe.SliceData(msgBuf), len(msgBuf))
 
-			if p.logger.Enabled(slog.LevelDebug) {
-				p.logger.Debug("Parsed NLMSGERR_ATTR_MSG attribute", slog.String("msg", msg))
+			if c.logger.Enabled(slog.LevelDebug) {
+				c.logger.Debug("Parsed NLMSGERR_ATTR_MSG attribute", slog.String("msg", msg))
 			}
 
 		default:
-			if p.logger.Enabled(slog.LevelDebug) {
-				p.logger.Debug("Skipping netlink attribute",
+			if c.logger.Enabled(slog.LevelDebug) {
+				c.logger.Debug("Skipping netlink attribute",
 					tslog.Uint("nla_len", nla.Len),
 					tslog.Uint("nla_type", nla.Type),
 				)
@@ -473,12 +504,12 @@ func (p *producer) handleNleAttrs(b []byte) (msg string) {
 	return
 }
 
-func (p *producer) handleIfiAttrs(b []byte) (name string) {
+func (c *conn) handleIfiAttrs(b []byte) (name string) {
 	for len(b) >= unix.SizeofRtAttr {
 		rta := (*unix.RtAttr)(unsafe.Pointer(unsafe.SliceData(b)))
 		rtaSize := rtnetlink.RtaAlign(rta.Len)
 		if rta.Len < unix.SizeofRtAttr || int(rtaSize) > len(b) {
-			p.logger.Error("Invalid rtnetlink attribute length",
+			c.logger.Error("Invalid rtnetlink attribute length",
 				tslog.Uint("rta_len", rta.Len),
 				tslog.Uint("rta_type", rta.Type),
 				tslog.Uint("rtaSize", rtaSize),
@@ -490,7 +521,7 @@ func (p *producer) handleIfiAttrs(b []byte) (name string) {
 		switch rta.Type {
 		case unix.IFLA_IFNAME:
 			if rta.Len < unix.SizeofRtAttr+1 {
-				p.logger.Error("Invalid IFLA_IFNAME attribute length",
+				c.logger.Error("Invalid IFLA_IFNAME attribute length",
 					tslog.Uint("rta_len", rta.Len),
 					tslog.Uint("rta_type", rta.Type),
 				)
@@ -501,8 +532,8 @@ func (p *producer) handleIfiAttrs(b []byte) (name string) {
 			name = unsafe.String(unsafe.SliceData(nameBuf), len(nameBuf))
 
 		default:
-			if p.logger.Enabled(slog.LevelDebug) {
-				p.logger.Debug("Skipping rtnetlink attribute",
+			if c.logger.Enabled(slog.LevelDebug) {
+				c.logger.Debug("Skipping rtnetlink attribute",
 					tslog.Uint("rta_len", rta.Len),
 					tslog.Uint("rta_type", rta.Type),
 				)
@@ -515,12 +546,12 @@ func (p *producer) handleIfiAttrs(b []byte) (name string) {
 	return
 }
 
-func (p *producer) handleIfaAttrs(b []byte) (addr netip.Addr, label string, cacheInfo unix.IfaCacheinfo, flags uint32) {
+func (c *conn) handleIfaAttrs(b []byte) (addr netip.Addr, label string, cacheInfo unix.IfaCacheinfo, flags uint32) {
 	for len(b) >= unix.SizeofRtAttr {
 		rta := (*unix.RtAttr)(unsafe.Pointer(unsafe.SliceData(b)))
 		rtaSize := rtnetlink.RtaAlign(rta.Len)
 		if rta.Len < unix.SizeofRtAttr || int(rtaSize) > len(b) {
-			p.logger.Error("Invalid rtnetlink attribute length",
+			c.logger.Error("Invalid rtnetlink attribute length",
 				tslog.Uint("rta_len", rta.Len),
 				tslog.Uint("rta_type", rta.Type),
 				tslog.Uint("rtaSize", rtaSize),
@@ -538,7 +569,7 @@ func (p *producer) handleIfaAttrs(b []byte) (addr netip.Addr, label string, cach
 			case 16:
 				addr = netip.AddrFrom16([16]byte(b[unix.SizeofRtAttr:rta.Len]))
 			default:
-				p.logger.Error("Invalid IFA_ADDRESS attribute length",
+				c.logger.Error("Invalid IFA_ADDRESS attribute length",
 					tslog.Uint("rta_len", rta.Len),
 					tslog.Uint("rta_type", rta.Type),
 					tslog.Int("addrLen", addrLen),
@@ -548,7 +579,7 @@ func (p *producer) handleIfaAttrs(b []byte) (addr netip.Addr, label string, cach
 
 		case unix.IFA_LABEL:
 			if rta.Len < unix.SizeofRtAttr+1 {
-				p.logger.Error("Invalid IFA_LABEL attribute length",
+				c.logger.Error("Invalid IFA_LABEL attribute length",
 					tslog.Uint("rta_len", rta.Len),
 					tslog.Uint("rta_type", rta.Type),
 				)
@@ -560,7 +591,7 @@ func (p *producer) handleIfaAttrs(b []byte) (addr netip.Addr, label string, cach
 
 		case unix.IFA_CACHEINFO:
 			if rta.Len < unix.SizeofRtAttr+unix.SizeofIfaCacheinfo {
-				p.logger.Error("Invalid IFA_CACHEINFO attribute length",
+				c.logger.Error("Invalid IFA_CACHEINFO attribute length",
 					tslog.Uint("rta_len", rta.Len),
 					tslog.Uint("rta_type", rta.Type),
 				)
@@ -571,7 +602,7 @@ func (p *producer) handleIfaAttrs(b []byte) (addr netip.Addr, label string, cach
 
 		case unix.IFA_FLAGS:
 			if rta.Len < unix.SizeofRtAttr+4 {
-				p.logger.Error("Invalid IFA_FLAGS attribute length",
+				c.logger.Error("Invalid IFA_FLAGS attribute length",
 					tslog.Uint("rta_len", rta.Len),
 					tslog.Uint("rta_type", rta.Type),
 				)
@@ -581,8 +612,8 @@ func (p *producer) handleIfaAttrs(b []byte) (addr netip.Addr, label string, cach
 			flags = *(*uint32)(unsafe.Pointer(unsafe.SliceData(b[unix.SizeofRtAttr:])))
 
 		default:
-			if p.logger.Enabled(slog.LevelDebug) {
-				p.logger.Debug("Skipping rtnetlink attribute",
+			if c.logger.Enabled(slog.LevelDebug) {
+				c.logger.Debug("Skipping rtnetlink attribute",
 					tslog.Uint("rta_len", rta.Len),
 					tslog.Uint("rta_type", rta.Type),
 				)
@@ -595,105 +626,225 @@ func (p *producer) handleIfaAttrs(b []byte) (addr netip.Addr, label string, cach
 	return
 }
 
-func (p *producer) handleStateChanges(done <-chan struct{}, c *rtnetlink.Conn) {
-	var (
-		fromAddr4 netip.Addr
-		fromAddr6 netip.Addr
-	)
-
-	for req := range p.reqCh {
-		if req.syncState {
-			if err := p.getLinkDump(done, c); err != nil {
-				p.logger.Error("Failed to get RTM_GETLINK dump", tslog.Err(err))
-			}
-
-			if err := p.getAddrDump(done, c); err != nil {
-				p.logger.Error("Failed to get RTM_GETADDR dump", tslog.Err(err))
-			}
+func (p *producer) handleStateSyncs() {
+	for {
+		if err := p.getLinkDump(); err != nil {
+			p.logger.Error("Failed to get RTM_GETLINK dump", tslog.Err(err))
 		}
 
-		if req.addr4Updated {
-			// Delete the old rule if it exists.
-			if err := p.delRuleIfAddrValid(done, fromAddr4, c); err != nil {
-				p.logger.Error("Failed to delete old IPv4 rule",
-					tslog.Addr("addr", fromAddr4),
-					tslog.Err(err),
-				)
-			}
-
-			// Add a new rule if there's a new address.
-			if err := p.addRuleIfAddrValid(done, req.addr4, c); err != nil {
-				p.logger.Error("Failed to add new IPv4 rule",
-					tslog.Addr("addr", req.addr4),
-					tslog.Err(err),
-				)
-			}
-
-			fromAddr4 = req.addr4
+		if err := p.getAddrDump(); err != nil {
+			p.logger.Error("Failed to get RTM_GETADDR dump", tslog.Err(err))
 		}
 
-		if req.addr6Updated {
-			// Delete the old rule if it exists.
-			if err := p.delRuleIfAddrValid(done, fromAddr6, c); err != nil {
-				p.logger.Error("Failed to delete old IPv6 rule",
-					tslog.Addr("addr", fromAddr6),
-					tslog.Err(err),
-				)
-			}
-
-			// Add a new rule if there's a new address.
-			if err := p.addRuleIfAddrValid(done, req.addr6, c); err != nil {
-				p.logger.Error("Failed to add new IPv6 rule",
-					tslog.Addr("addr", req.addr6),
-					tslog.Err(err),
-				)
-			}
-
-			fromAddr6 = req.addr6
+		if _, ok := <-p.resyncCh; !ok {
+			return
 		}
-	}
-
-	// Delete the rules on exit.
-	if err := p.delRuleIfAddrValid(done, fromAddr4, c); err != nil {
-		p.logger.Error("Failed to delete IPv4 rule on exit",
-			tslog.Addr("addr", fromAddr4),
-			tslog.Err(err),
-		)
-	}
-
-	if err := p.delRuleIfAddrValid(done, fromAddr6, c); err != nil {
-		p.logger.Error("Failed to delete IPv6 rule on exit",
-			tslog.Addr("addr", fromAddr6),
-			tslog.Err(err),
-		)
 	}
 }
 
-func (p *producer) sendAndWait(done <-chan struct{}, c *rtnetlink.Conn, nlh *unix.NlMsghdr) error {
-	p.seq++
-	nlh.Seq = p.seq
+type addrUpdateKind uint8
+
+const (
+	addrUpdateKindAdd = iota
+	addrUpdateKindDelete
+)
+
+type addrUpdate struct {
+	addr netip.Addr
+	kind addrUpdateKind
+}
+
+type ruleManager struct {
+	updateCh chan addrUpdate
+	conn
+}
+
+func (m *ruleManager) NotifyAddAddr(addr netip.Addr) {
+	m.updateCh <- addrUpdate{addr: addr, kind: addrUpdateKindAdd}
+}
+
+func (m *ruleManager) NotifyDelAddr(addr netip.Addr) {
+	m.updateCh <- addrUpdate{addr: addr, kind: addrUpdateKindDelete}
+}
+
+func (m *ruleManager) Stop() {
+	close(m.updateCh)
+}
+
+func (m *ruleManager) Run(ctx context.Context, wg *sync.WaitGroup) {
+	if err := m.openNlConn(0); err != nil {
+		m.logger.Error("Failed to open netlink connection for managing rules", tslog.Err(err))
+		return
+	}
+	defer m.closeNlConn()
+
+	_ = context.AfterFunc(ctx, func() {
+		if err := m.nlConn.SetReadDeadline(aLongTimeAgo); err != nil {
+			m.logger.Error("Failed to set read deadline on netlink connection", tslog.Err(err))
+		}
+	})
+
+	wg.Go(func() {
+		m.readResponses()
+		close(m.respCh) // unblock sendAndWait and thus handleAddrUpdates
+	})
+
+	m.handleAddrUpdates()
+}
+
+func (m *ruleManager) readResponses() {
+	var rsa unix.RawSockaddrNetlink
+	rb := make([]byte, readBufSize)
+	riov := unix.Iovec{
+		Base: unsafe.SliceData(rb),
+		Len:  readBufSize,
+	}
+	rmsg := unix.Msghdr{
+		Name:    (*byte)(unsafe.Pointer(&rsa)),
+		Namelen: unix.SizeofSockaddrNetlink,
+		Iov:     &riov,
+		Iovlen:  1,
+	}
+	rc := m.nlConn.NewRConn()
+
+	for {
+		n, err := rc.ReadMsg(&rmsg, 0)
+		if err != nil {
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				break
+			}
+			m.logger.Error("Failed to read netlink message", tslog.Err(err))
+			continue
+		}
+
+		if m.logger.Enabled(slog.LevelDebug) {
+			m.logger.Debug("Received netlink message",
+				tslog.Int("n", n),
+				tslog.Uint("nl_pid", rsa.Pid),
+				tslog.Uint("nl_groups", rsa.Groups),
+			)
+		}
+
+		m.handleNetlinkMessage(rb[:n])
+	}
+}
+
+func (m *ruleManager) handleNetlinkMessage(b []byte) {
+	for len(b) >= unix.SizeofNlMsghdr {
+		nlh := (*unix.NlMsghdr)(unsafe.Pointer(unsafe.SliceData(b)))
+		msgSize := rtnetlink.NlMsgAlign(nlh.Len)
+		if nlh.Len < unix.SizeofNlMsghdr || int(msgSize) > len(b) {
+			m.logger.Error("Invalid netlink message length",
+				tslog.Uint("nlmsg_len", nlh.Len),
+				tslog.Uint("nlmsg_type", nlh.Type),
+				tslog.Uint("nlmsg_flags", nlh.Flags),
+				tslog.Uint("nlmsg_seq", nlh.Seq),
+				tslog.Uint("nlmsg_pid", nlh.Pid),
+				tslog.Uint("msgSize", msgSize),
+				tslog.Int("len(b)", len(b)),
+			)
+			return
+		}
+
+		switch nlh.Type {
+		case unix.NLMSG_ERROR:
+			if nlh.Len < unix.SizeofNlMsghdr+unix.SizeofNlMsgerr {
+				m.logger.Error("Invalid NLMSG_ERROR message length",
+					tslog.Uint("nlmsg_len", nlh.Len),
+					tslog.Uint("nlmsg_type", nlh.Type),
+					tslog.Uint("nlmsg_flags", nlh.Flags),
+					tslog.Uint("nlmsg_seq", nlh.Seq),
+					tslog.Uint("nlmsg_pid", nlh.Pid),
+				)
+				return
+			}
+
+			nle := (*unix.NlMsgerr)(unsafe.Pointer(unsafe.SliceData(b[unix.SizeofNlMsghdr:])))
+			msg := m.handleNleAttrs(b[unix.SizeofNlMsghdr+unix.SizeofNlMsgerr : nlh.Len])
+			lvl := slog.LevelDebug
+			if nle.Error != 0 {
+				lvl = slog.LevelError
+			}
+
+			if m.logger.Enabled(lvl) {
+				m.logger.Log(lvl, "Received response to netlink request",
+					tslog.Int("error", nle.Error),
+					tslog.Uint("seq", nle.Msg.Seq),
+					slog.String("msg", msg),
+				)
+			}
+
+			m.respCh <- response{seq: nle.Msg.Seq, err: nle.Error}
+
+		default:
+			if m.logger.Enabled(slog.LevelDebug) {
+				m.logger.Debug("Skipping netlink message",
+					tslog.Uint("nlmsg_len", nlh.Len),
+					tslog.Uint("nlmsg_type", nlh.Type),
+					tslog.Uint("nlmsg_flags", nlh.Flags),
+					tslog.Uint("nlmsg_seq", nlh.Seq),
+					tslog.Uint("nlmsg_pid", nlh.Pid),
+				)
+			}
+		}
+
+		b = b[msgSize:]
+	}
+}
+
+func (m *ruleManager) handleAddrUpdates() {
+	for update := range m.updateCh {
+		switch update.kind {
+		case addrUpdateKindAdd:
+			if err := m.addRule(update.addr); err != nil {
+				m.logger.Error("Failed to add rule",
+					tslog.Addr("addr", update.addr),
+					tslog.Err(err),
+				)
+				continue
+			}
+			m.logger.Info("Added rule", tslog.Addr("addr", update.addr))
+
+		case addrUpdateKindDelete:
+			if err := m.delRule(update.addr); err != nil {
+				m.logger.Error("Failed to delete rule",
+					tslog.Addr("addr", update.addr),
+					tslog.Err(err),
+				)
+				continue
+			}
+			m.logger.Info("Deleted rule", tslog.Addr("addr", update.addr))
+
+		default:
+			panic("unreachable")
+		}
+	}
+}
+
+func (c *conn) sendAndWait(nlh *unix.NlMsghdr) error {
+	c.seq++
+	nlh.Seq = c.seq
 	b := unsafe.Slice((*byte)(unsafe.Pointer(nlh)), nlh.Len)
-	if _, err := c.Write(b); err != nil {
+	if _, err := c.nlConn.Write(b); err != nil {
 		return err
 	}
 
-	select {
-	case <-done:
-		return nil
-	case resp := <-p.respCh:
-		if resp.seq != nlh.Seq {
-			p.logger.Error("Received response with unexpected sequence number",
-				tslog.Uint("reqSeq", nlh.Seq),
-				tslog.Uint("respSeq", resp.seq),
-				tslog.Int("respErr", resp.err),
-			)
-			return nil
-		}
-		if resp.err != 0 {
-			return syscall.Errno(-resp.err)
-		}
+	resp, ok := <-c.respCh
+	if !ok {
 		return nil
 	}
+	if resp.seq != nlh.Seq {
+		c.logger.Error("Received response with unexpected sequence number",
+			tslog.Uint("reqSeq", nlh.Seq),
+			tslog.Uint("respSeq", resp.seq),
+			tslog.Int("respErr", resp.err),
+		)
+		return nil
+	}
+	if resp.err != 0 {
+		return syscall.Errno(-resp.err)
+	}
+	return nil
 }
 
 type linkRequest struct {
@@ -701,7 +852,7 @@ type linkRequest struct {
 	Message unix.IfInfomsg
 }
 
-func (p *producer) getLinkDump(done <-chan struct{}, c *rtnetlink.Conn) error {
+func (c *conn) getLinkDump() error {
 	const msgLen = unix.SizeofNlMsghdr + unix.SizeofIfInfomsg
 	req := linkRequest{
 		Header: unix.NlMsghdr{
@@ -714,7 +865,7 @@ func (p *producer) getLinkDump(done <-chan struct{}, c *rtnetlink.Conn) error {
 			Type:   unix.ARPHRD_NETROM,
 		},
 	}
-	return p.sendAndWait(done, c, &req.Header)
+	return c.sendAndWait(&req.Header)
 }
 
 type addrRequest struct {
@@ -722,7 +873,7 @@ type addrRequest struct {
 	Message unix.IfAddrmsg
 }
 
-func (p *producer) getAddrDump(done <-chan struct{}, c *rtnetlink.Conn) error {
+func (c *conn) getAddrDump() error {
 	const msgLen = unix.SizeofNlMsghdr + unix.SizeofIfAddrmsg
 	req := addrRequest{
 		Header: unix.NlMsghdr{
@@ -735,7 +886,7 @@ func (p *producer) getAddrDump(done <-chan struct{}, c *rtnetlink.Conn) error {
 			Scope:  unix.RT_SCOPE_UNIVERSE,
 		},
 	}
-	return p.sendAndWait(done, c, &req.Header)
+	return c.sendAndWait(&req.Header)
 }
 
 type ruleRequest struct {
@@ -788,7 +939,7 @@ func putRuleRequest(req *ruleRequest, addr netip.Addr, msgType, flags uint16, ac
 	}
 }
 
-func (p *producer) addRule(done <-chan struct{}, addr netip.Addr, c *rtnetlink.Conn) error {
+func (c *conn) addRule(addr netip.Addr) error {
 	var req ruleRequest
 	putRuleRequest(
 		&req,
@@ -799,10 +950,10 @@ func (p *producer) addRule(done <-chan struct{}, addr netip.Addr, c *rtnetlink.C
 		unix.NLM_F_REQUEST|unix.NLM_F_ACK|unix.NLM_F_EXCL|unix.NLM_F_CREATE,
 		unix.FR_ACT_TO_TBL,
 	)
-	return p.sendAndWait(done, c, &req.Header)
+	return c.sendAndWait(&req.Header)
 }
 
-func (p *producer) delRule(done <-chan struct{}, addr netip.Addr, c *rtnetlink.Conn) error {
+func (c *conn) delRule(addr netip.Addr) error {
 	var req ruleRequest
 	putRuleRequest(
 		&req,
@@ -811,19 +962,5 @@ func (p *producer) delRule(done <-chan struct{}, addr netip.Addr, c *rtnetlink.C
 		unix.NLM_F_REQUEST|unix.NLM_F_ACK,
 		unix.FR_ACT_UNSPEC,
 	)
-	return p.sendAndWait(done, c, &req.Header)
-}
-
-func (p *producer) addRuleIfAddrValid(done <-chan struct{}, addr netip.Addr, c *rtnetlink.Conn) error {
-	if addr.IsValid() {
-		return p.addRule(done, addr, c)
-	}
-	return nil
-}
-
-func (p *producer) delRuleIfAddrValid(done <-chan struct{}, addr netip.Addr, c *rtnetlink.Conn) error {
-	if addr.IsValid() {
-		return p.delRule(done, addr, c)
-	}
-	return nil
+	return c.sendAndWait(&req.Header)
 }
