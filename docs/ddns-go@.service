@@ -1,5 +1,5 @@
 [Unit]
-Description=DDNS service supporting dynamic updates of A, AAAA, and HTTPS records
+Description=DDNS service for managing A, AAAA, and HTTPS records
 After=network-online.target
 Wants=network-online.target
 
