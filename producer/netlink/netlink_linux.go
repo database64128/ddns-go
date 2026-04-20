@@ -3,6 +3,7 @@ package netlink
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/netip"
 	"os"
@@ -112,9 +113,10 @@ func (p *producer) run(ctx context.Context) {
 	})
 
 	if p.ruleManager != nil {
-		p.wg.Go(func() {
-			p.ruleManager.Run(ctx, &p.wg)
-		})
+		if err := p.ruleManager.Start(ctx, &p.wg); err != nil {
+			p.logger.Error("Failed to start rule manager", tslog.Err(err))
+			return
+		}
 	}
 
 	p.wg.Go(func() {
@@ -668,15 +670,14 @@ func (m *ruleManager) NotifyDelAddr(addr netip.Addr) {
 }
 
 func (m *ruleManager) Stop() {
-	close(m.updateCh)
+	close(m.updateCh) // unblock handleAddrUpdates
+	_ = m.closeNlConn()
 }
 
-func (m *ruleManager) Run(ctx context.Context, wg *sync.WaitGroup) {
+func (m *ruleManager) Start(ctx context.Context, wg *sync.WaitGroup) error {
 	if err := m.openNlConn(0); err != nil {
-		m.logger.Error("Failed to open netlink connection for managing rules", tslog.Err(err))
-		return
+		return fmt.Errorf("failed to open netlink connection: %w", err)
 	}
-	defer m.closeNlConn()
 
 	_ = context.AfterFunc(ctx, func() {
 		if err := m.nlConn.SetReadDeadline(aLongTimeAgo); err != nil {
@@ -689,7 +690,8 @@ func (m *ruleManager) Run(ctx context.Context, wg *sync.WaitGroup) {
 		close(m.respCh) // unblock sendAndWait and thus handleAddrUpdates
 	})
 
-	m.handleAddrUpdates()
+	wg.Go(m.handleAddrUpdates)
+	return nil
 }
 
 func (m *ruleManager) readResponses() {
