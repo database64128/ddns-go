@@ -229,6 +229,7 @@ func clientDo[R any](client *http.Client, authorizationHeader string, newRequest
 	}
 
 	req.Header["Authorization"] = []string{authorizationHeader}
+	req.Header["User-Agent"] = []string{httpreq.DefaultUserAgent}
 
 	resp, err := client.Do(req)
 	if err != nil {

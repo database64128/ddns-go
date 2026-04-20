@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/database64128/ddns-go/internal/httpreq"
 	"github.com/database64128/ddns-go/jsoncfg"
 	"github.com/database64128/ddns-go/producer"
 	"github.com/database64128/ddns-go/producer/internal/poller"
@@ -91,6 +92,7 @@ func (s *Source) Snapshot(ctx context.Context) (producer.Message, error) {
 
 	req.Header["Content-Type"] = []string{"application/x-www-form-urlencoded"}
 	req.Header["Referer"] = []string{s.loginReferer} // The request will fail without a Referer.
+	req.Header["User-Agent"] = []string{httpreq.DefaultUserAgent}
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -122,6 +124,7 @@ func (s *Source) Snapshot(ctx context.Context) (producer.Message, error) {
 	}
 
 	req.AddCookie(cookie)
+	req.Header["User-Agent"] = []string{httpreq.DefaultUserAgent}
 
 	resp, err = s.client.Do(req)
 	if err != nil {

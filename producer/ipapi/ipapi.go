@@ -25,7 +25,7 @@ type ProducerConfig struct {
 	URL string `json:"url,omitzero"`
 
 	// UserAgent is the User-Agent header value to use when making requests to the IP address API.
-	// If empty, it defaults to [defaultUserAgent].
+	// If empty, it defaults to [httpreq.DefaultUserAgent].
 	UserAgent string `json:"user_agent,omitzero"`
 
 	// PollInterval is the interval between polling the IP address API.

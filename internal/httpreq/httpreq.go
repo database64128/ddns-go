@@ -9,7 +9,12 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	ddnsgo "github.com/database64128/ddns-go"
 )
+
+// DefaultUserAgent is the default User-Agent header value used in HTTP requests.
+const DefaultUserAgent = "cubic-ddns-go/" + ddnsgo.Version
 
 // NewJSONRequest creates a new HTTP request with the given
 // method, url, and body encoded as JSON. Content-Type is

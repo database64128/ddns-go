@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"net/netip"
 
-	ddnsgo "github.com/database64128/ddns-go"
+	"github.com/database64128/ddns-go/internal/httpreq"
 	"github.com/database64128/ddns-go/producer"
 )
 
@@ -24,7 +24,7 @@ type TextIPv4Source struct {
 //
 //   - If client is nil, an internal IPv4-only HTTP client is used.
 //   - If url is empty, it defaults to "https://api.ipify.org/".
-//   - If userAgent is empty, it defaults to [defaultUserAgent].
+//   - If userAgent is empty, it defaults to [httpreq.DefaultUserAgent].
 func NewTextIPv4Source(client *http.Client, url, userAgent string) *TextIPv4Source {
 	if client == nil {
 		// Make a transport that forces IPv4.
@@ -45,7 +45,7 @@ func NewTextIPv4Source(client *http.Client, url, userAgent string) *TextIPv4Sour
 		url = "https://api.ipify.org/"
 	}
 	if userAgent == "" {
-		userAgent = defaultUserAgent
+		userAgent = httpreq.DefaultUserAgent
 	}
 	return &TextIPv4Source{
 		textSource: textSource{
@@ -83,7 +83,7 @@ type TextIPv6Source struct {
 //
 //   - If client is nil, an internal IPv6-only HTTP client is used.
 //   - If url is empty, it defaults to "https://api6.ipify.org/".
-//   - If userAgent is empty, it defaults to [defaultUserAgent].
+//   - If userAgent is empty, it defaults to [httpreq.DefaultUserAgent].
 func NewTextIPv6Source(client *http.Client, url, userAgent string) *TextIPv6Source {
 	if client == nil {
 		// Make a transport that forces IPv6.
@@ -104,7 +104,7 @@ func NewTextIPv6Source(client *http.Client, url, userAgent string) *TextIPv6Sour
 		url = "https://api6.ipify.org/"
 	}
 	if userAgent == "" {
-		userAgent = defaultUserAgent
+		userAgent = httpreq.DefaultUserAgent
 	}
 	return &TextIPv6Source{
 		textSource: textSource{
@@ -130,8 +130,6 @@ func (s *TextIPv6Source) Snapshot(ctx context.Context) (producer.Message, error)
 	}
 	return producer.Message{IPv6: addr}, nil
 }
-
-const defaultUserAgent = "cubic-ddns-go/" + ddnsgo.Version
 
 // textSource obtains the public IP address from a text-based IP address API.
 type textSource struct {
