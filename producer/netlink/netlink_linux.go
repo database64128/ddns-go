@@ -382,11 +382,14 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 								tslog.Addr("newAddr", addr),
 							)
 						}
-						p.addr4 = addr
-						addr4updated = true
 						if p.ruleManager != nil {
+							if p.addr4.IsValid() {
+								p.ruleManager.NotifyDelAddr(p.addr4)
+							}
 							p.ruleManager.NotifyAddAddr(addr)
 						}
+						p.addr4 = addr
+						addr4updated = true
 
 					case addr.Is6() && addr != p.addr6:
 						if p.logger.Enabled(slog.LevelDebug) {
@@ -395,11 +398,14 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 								tslog.Addr("newAddr", addr),
 							)
 						}
-						p.addr6 = addr
-						addr6updated = true
 						if p.ruleManager != nil {
+							if p.addr6.IsValid() {
+								p.ruleManager.NotifyDelAddr(p.addr6)
+							}
 							p.ruleManager.NotifyAddAddr(addr)
 						}
+						p.addr6 = addr
+						addr6updated = true
 					}
 
 				case unix.RTM_DELADDR:
@@ -410,11 +416,11 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 								tslog.Addr("addr", addr),
 							)
 						}
-						p.addr4 = netip.Addr{}
-						addr4updated = true
 						if p.ruleManager != nil {
 							p.ruleManager.NotifyDelAddr(addr)
 						}
+						p.addr4 = netip.Addr{}
+						addr4updated = true
 
 					case p.addr6:
 						if p.logger.Enabled(slog.LevelDebug) {
@@ -422,11 +428,11 @@ func (p *producer) handleNetlinkMessage(b []byte) (addr4updated, addr6updated bo
 								tslog.Addr("addr", addr),
 							)
 						}
-						p.addr6 = netip.Addr{}
-						addr6updated = true
 						if p.ruleManager != nil {
 							p.ruleManager.NotifyDelAddr(addr)
 						}
+						p.addr6 = netip.Addr{}
+						addr6updated = true
 					}
 				}
 
