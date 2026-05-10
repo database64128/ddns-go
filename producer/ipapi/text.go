@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"sync"
+	"time"
 
 	"github.com/database64128/ddns-go/internal/httpreq"
 	"github.com/database64128/ddns-go/producer"
@@ -27,19 +29,7 @@ type TextIPv4Source struct {
 //   - If userAgent is empty, it defaults to [httpreq.DefaultUserAgent].
 func NewTextIPv4Source(client *http.Client, url, userAgent string) *TextIPv4Source {
 	if client == nil {
-		// Make a transport that forces IPv4.
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			switch network {
-			case "tcp":
-				network = "tcp4"
-			case "udp":
-				network = "udp4"
-			}
-			var dialer net.Dialer
-			return dialer.DialContext(ctx, network, addr)
-		}
-		client = &http.Client{Transport: transport}
+		client = defaultHttpClient4()
 	}
 	if url == "" {
 		url = "https://api.ipify.org/"
@@ -86,19 +76,7 @@ type TextIPv6Source struct {
 //   - If userAgent is empty, it defaults to [httpreq.DefaultUserAgent].
 func NewTextIPv6Source(client *http.Client, url, userAgent string) *TextIPv6Source {
 	if client == nil {
-		// Make a transport that forces IPv6.
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			switch network {
-			case "tcp":
-				network = "tcp6"
-			case "udp":
-				network = "udp6"
-			}
-			var dialer net.Dialer
-			return dialer.DialContext(ctx, network, addr)
-		}
-		client = &http.Client{Transport: transport}
+		client = defaultHttpClient6()
 	}
 	if url == "" {
 		url = "https://api6.ipify.org/"
@@ -169,3 +147,55 @@ func (s *textSource) get(ctx context.Context) (netip.Addr, error) {
 	}
 	return addr.Unmap(), nil
 }
+
+func defaultHttpTransportClone() *http.Transport {
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		// http.DefaultTransport was changed by user code to some custom implementation,
+		// so here we create a best-effort approximation of the original.
+		return &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			// DialContext will be set by caller.
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
+	}
+	return transport.Clone()
+}
+
+// defaultHttpClient4 returns an [*http.Client] that behaves like
+// [http.DefaultClient] but forces connections to use IPv4 only.
+var defaultHttpClient4 = sync.OnceValue(func() *http.Client {
+	transport := defaultHttpTransportClone()
+	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		switch network {
+		case "tcp":
+			network = "tcp4"
+		case "udp":
+			network = "udp4"
+		}
+		var dialer net.Dialer
+		return dialer.DialContext(ctx, network, addr)
+	}
+	return &http.Client{Transport: transport}
+})
+
+// defaultHttpClient6 returns an [*http.Client] that behaves like
+// [http.DefaultClient] but forces connections to use IPv6 only.
+var defaultHttpClient6 = sync.OnceValue(func() *http.Client {
+	transport := defaultHttpTransportClone()
+	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		switch network {
+		case "tcp":
+			network = "tcp6"
+		case "udp":
+			network = "udp6"
+		}
+		var dialer net.Dialer
+		return dialer.DialContext(ctx, network, addr)
+	}
+	return &http.Client{Transport: transport}
+})
