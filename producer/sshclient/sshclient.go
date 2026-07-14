@@ -55,6 +55,9 @@ type SourceConfig struct {
 	// Auth is the list of authentication methods for SSH.
 	Auth []ssh.AuthMethod
 
+	// AgentClient is an optional SSH agent client for authentication.
+	AgentClient *SSHAgentClient
+
 	// HostKeyCallback is the callback function for verifying the server's host key.
 	HostKeyCallback ssh.HostKeyCallback
 
@@ -79,6 +82,7 @@ func (cfg *SourceConfig) NewSource() *Source {
 		macs:              cfg.MACs,
 		user:              cfg.User,
 		auth:              cfg.Auth,
+		agentClient:       cfg.AgentClient,
 		hostKeyCallback:   cfg.HostKeyCallback,
 		hostKeyAlgorithms: cfg.HostKeyAlgorithms,
 	}
@@ -108,6 +112,7 @@ type Source struct {
 	macs              []string
 	user              string
 	auth              []ssh.AuthMethod
+	agentClient       *SSHAgentClient
 	hostKeyCallback   ssh.HostKeyCallback
 	hostKeyAlgorithms []string
 }
@@ -135,6 +140,10 @@ func (s *Source) Snapshot(ctx context.Context) (producer.Message, error) {
 	}()
 
 	if s.client == nil {
+		// Horrible hack due to [agent]'s lack of context support.
+		if s.agentClient != nil {
+			s.agentClient.SetContext(ctx)
+		}
 		c, chans, req, err := ssh.NewClientConn(s.netConn, s.address, &ssh.ClientConfig{
 			Config: ssh.Config{
 				KeyExchanges: s.keyExchanges,
@@ -146,6 +155,10 @@ func (s *Source) Snapshot(ctx context.Context) (producer.Message, error) {
 			HostKeyCallback:   s.hostKeyCallback,
 			HostKeyAlgorithms: s.hostKeyAlgorithms,
 		})
+		// Same horrible hack :P
+		if s.agentClient != nil {
+			s.agentClient.StopContextAfterFunc()
+		}
 		if err != nil {
 			// On error, ssh.NewClientConn closes the connection for you.
 			return producer.Message{}, fmt.Errorf("failed to establish SSH connection: %w", err)
@@ -307,7 +320,10 @@ func (cfg *ProducerConfig) NewProducer(logger *tslog.Logger) (producer.Producer,
 		keyAuth = ssh.PublicKeys(signers...)
 	}
 
-	var agentAuth ssh.AuthMethod
+	var (
+		agentAuth   ssh.AuthMethod
+		agentClient *SSHAgentClient
+	)
 	if cfg.IdentityAgent != "none" {
 		var agentPath string
 		if cfg.IdentityAgent != "" {
@@ -317,20 +333,8 @@ func (cfg *ProducerConfig) NewProducer(logger *tslog.Logger) (producer.Producer,
 		}
 
 		if agentPath != "" {
-			agentAuth = ssh.PublicKeysCallback(func() ([]ssh.Signer, error) {
-				conn, err := net.Dial("unix", agentPath)
-				if err != nil {
-					return nil, fmt.Errorf("failed to connect to SSH agent at %q: %w", agentPath, err)
-				}
-				defer conn.Close()
-
-				agentClient := agent.NewClient(conn)
-				signers, err := agentClient.Signers()
-				if err != nil {
-					return nil, fmt.Errorf("failed to get signers from SSH agent: %w", err)
-				}
-				return signers, nil
-			})
+			agentClient = NewSSHAgentClient(agentPath)
+			agentAuth = ssh.PublicKeysCallback(agentClient.Signers)
 		}
 	}
 
@@ -414,6 +418,7 @@ func (cfg *ProducerConfig) NewProducer(logger *tslog.Logger) (producer.Producer,
 		MACs:              macs,
 		User:              cfg.User,
 		Auth:              authMethods,
+		AgentClient:       agentClient,
 		HostKeyCallback:   hostKeyCallback,
 		HostKeyAlgorithms: hostKeyAlgorithms,
 	}
@@ -482,4 +487,72 @@ func (cfg *SSHKeyConfig) Signer() (ssh.Signer, error) {
 	}
 
 	return signer, nil
+}
+
+// SSHAgentClient is a wrapper around the SSH agent client provided by the [agent] package.
+// It manages the connection lifetime and provides [context.Context] cancellation support.
+type SSHAgentClient struct {
+	client           agent.ExtendedAgent
+	netConn          net.Conn
+	ctx              context.Context
+	path             string
+	stopCtxAfterFunc func()
+}
+
+// NewSSHAgentClient returns a new SSH agent client for the given socket path.
+func NewSSHAgentClient(path string) *SSHAgentClient {
+	return &SSHAgentClient{
+		path:             path,
+		stopCtxAfterFunc: func() {},
+	}
+}
+
+func (c *SSHAgentClient) resetClient() {
+	_ = c.netConn.Close()
+	c.client = nil
+}
+
+// SetContext sets the context for the underlying connection used by the SSH agent client.
+func (c *SSHAgentClient) SetContext(ctx context.Context) {
+	c.ctx = ctx
+}
+
+// Signers returns the list of signers from the SSH agent.
+//
+// SetContext must be called first. After authentication is complete, StopContextAfterFunc
+// must be called to release resources associated with the context.
+func (c *SSHAgentClient) Signers() ([]ssh.Signer, error) {
+	if c.client == nil {
+		var dialer net.Dialer
+		nc, err := dialer.DialContext(c.ctx, "unix", c.path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to SSH agent at %q: %w", c.path, err)
+		}
+		c.netConn = nc
+		c.client = agent.NewClient(nc)
+	}
+
+	stop := context.AfterFunc(c.ctx, func() {
+		_ = c.netConn.SetDeadline(aLongTimeAgo)
+	})
+	c.stopCtxAfterFunc = func() {
+		if !stop() {
+			c.resetClient()
+		}
+		c.stopCtxAfterFunc = func() {}
+	}
+
+	signers, err := c.client.Signers()
+	if err != nil {
+		if _, ok := errors.AsType[*net.OpError](err); ok {
+			c.resetClient()
+		}
+		return nil, fmt.Errorf("failed to get signers from SSH agent: %w", err)
+	}
+	return signers, nil
+}
+
+// StopContextAfterFunc releases resources associated with the context.
+func (c *SSHAgentClient) StopContextAfterFunc() {
+	c.stopCtxAfterFunc()
 }
