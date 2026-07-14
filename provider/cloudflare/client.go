@@ -155,15 +155,15 @@ func urlValuesSetIntIfNotZero(values url.Values, key string, value int) {
 
 // UpdateDNSRecordRequest is the request body for updating a DNS record.
 type UpdateDNSRecordRequest struct {
-	Name     string         `json:"name,omitempty"`
-	Type     string         `json:"type,omitempty"`
-	Content  string         `json:"content,omitempty"`
-	Priority uint16         `json:"priority,omitempty"`
-	Proxied  *bool          `json:"proxied,omitempty"`
-	TTL      int            `json:"ttl,omitempty"`
-	Data     *DNSRecordData `json:"data,omitempty"`
-	Comment  *string        `json:"comment,omitempty"`
-	Tags     []string       `json:"tags,omitempty"`
+	Name     string         `json:"name,omitzero"`
+	Type     string         `json:"type,omitzero"`
+	Content  string         `json:"content,omitzero"`
+	Priority uint16         `json:"priority,omitzero"`
+	Proxied  *bool          `json:"proxied,omitzero"`
+	TTL      int            `json:"ttl,omitzero"`
+	Data     *DNSRecordData `json:"data,omitzero"`
+	Comment  *string        `json:"comment,omitzero"`
+	Tags     []string       `json:"tags,omitzero"`
 }
 
 // NewRequest creates a new request to update a DNS record.
@@ -175,20 +175,20 @@ func (r *UpdateDNSRecordRequest) NewRequest(ctx context.Context, zoneID, recordI
 // DNSRecord represents a DNS record in a zone.
 type DNSRecord struct {
 	ID         string         `json:"id"`
-	ZoneID     string         `json:"zone_id,omitempty"`
-	ZoneName   string         `json:"zone_name,omitempty"`
+	ZoneID     string         `json:"zone_id,omitzero"`
+	ZoneName   string         `json:"zone_name,omitzero"`
 	Name       string         `json:"name"`
 	Type       string         `json:"type"`
 	Content    string         `json:"content"`
-	Priority   uint16         `json:"priority,omitempty"`
-	Proxiable  bool           `json:"proxiable,omitempty"`
+	Priority   uint16         `json:"priority,omitzero"`
+	Proxiable  bool           `json:"proxiable,omitzero"`
 	Proxied    bool           `json:"proxied"`
-	Locked     bool           `json:"locked,omitempty"`
-	TTL        int            `json:"ttl,omitempty"`
-	Data       *DNSRecordData `json:"data,omitempty"`
-	Meta       *DNSRecordMeta `json:"meta,omitempty"`
-	Comment    string         `json:"comment,omitempty"`
-	Tags       []string       `json:"tags,omitempty"`
+	Locked     bool           `json:"locked,omitzero"`
+	TTL        int            `json:"ttl,omitzero"`
+	Data       *DNSRecordData `json:"data,omitzero"`
+	Meta       *DNSRecordMeta `json:"meta,omitzero"`
+	Comment    string         `json:"comment,omitzero"`
+	Tags       []string       `json:"tags,omitzero"`
 	CreatedOn  time.Time      `json:"created_on"`
 	ModifiedOn time.Time      `json:"modified_on"`
 }
@@ -214,12 +214,12 @@ type DNSRecordMeta struct {
 
 // DNSRecordData represents the data of a DNS record.
 type DNSRecordData struct {
-	Name     string `json:"name,omitempty"`
-	Target   string `json:"target,omitempty"`
-	Value    string `json:"value,omitempty"`
-	Priority uint16 `json:"priority,omitempty"`
-	Weight   uint16 `json:"weight,omitempty"`
-	Port     uint16 `json:"port,omitempty"`
+	Name     string `json:"name,omitzero"`
+	Target   string `json:"target,omitzero"`
+	Value    string `json:"value,omitzero"`
+	Priority uint16 `json:"priority,omitzero"`
+	Weight   uint16 `json:"weight,omitzero"`
+	Port     uint16 `json:"port,omitzero"`
 }
 
 func clientDo[R any](client *http.Client, authorizationHeader string, newRequest func() (*http.Request, error)) (result R, err error) {
