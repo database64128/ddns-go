@@ -17,6 +17,7 @@ import (
 	"github.com/database64128/ddns-go/producer/iface"
 	"github.com/database64128/ddns-go/producer/ipapi"
 	"github.com/database64128/ddns-go/producer/netlink"
+	"github.com/database64128/ddns-go/producer/sshclient"
 	"github.com/database64128/ddns-go/producer/win32iphlp"
 	"github.com/database64128/ddns-go/provider"
 	"github.com/database64128/ddns-go/provider/cloudflare"
@@ -184,6 +185,7 @@ type SourceConfig struct {
 	//
 	//   - "asusrouter": ASUS router.
 	//   - "ipapi": IP address API.
+	//   - "ssh": SSH client.
 	//   - "iface": Network interface (generic).
 	//   - "netlink": Network interface (Linux).
 	//   - "bsdroute": Network interface (Darwin, DragonFly BSD, FreeBSD, NetBSD, OpenBSD).
@@ -195,6 +197,9 @@ type SourceConfig struct {
 
 	// IPAPI is the producer configuration for an IP address API source.
 	IPAPI ipapi.ProducerConfig `json:"ipapi,omitzero"`
+
+	// SSH is the producer configuration for an SSH client source.
+	SSH sshclient.ProducerConfig `json:"ssh,omitzero"`
 
 	// Iface is the producer configuration for a generic network interface source.
 	Iface iface.ProducerConfig `json:"iface,omitzero"`
@@ -216,6 +221,8 @@ func (cfg *SourceConfig) NewProducer(client *http.Client, logger *tslog.Logger) 
 		return cfg.ASUSRouter.NewProducer(client, logger)
 	case "ipapi":
 		return cfg.IPAPI.NewProducer(client, logger)
+	case "ssh":
+		return cfg.SSH.NewProducer(logger)
 	case "iface":
 		return cfg.Iface.NewProducer(logger)
 	case "netlink":

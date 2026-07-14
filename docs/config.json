@@ -32,6 +32,34 @@
             }
         },
         {
+            "name": "ssh router",
+            "type": "ssh",
+            "ssh": {
+                "command4": "nvram get wan0_ipaddr",
+                "command6": "nvram get ipv6_rtr_addr",
+                "network": "tcp",
+                "address": "router.local:22",
+                "key_exchanges": [],
+                "ciphers": [],
+                "macs": [],
+                "user": "admin",
+                "keys": [
+                    {
+                        "private_key_path": ".ssh/id_ed25519",
+                        "private_key_passphrase": "",
+                        "certificate_path": ""
+                    }
+                ],
+                "identity_agent": "none",
+                "host_public_key_path": "",
+                "known_hosts_paths": [],
+                "host_key_algorithms": [
+                    "ssh-ed25519"
+                ],
+                "poll_interval": "5m"
+            }
+        },
+        {
             "name": "enp3s0",
             "type": "iface",
             "iface": {
