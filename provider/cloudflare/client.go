@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -237,9 +236,9 @@ func clientDo[R any](client *http.Client, authorizationHeader string, newRequest
 	}
 	defer resp.Body.Close()
 
+	const maxResponseBodySize = 128 * 1024 * 1024 // 128 MiB
 	var buf bytes.Buffer
-	buf.Grow(max(0, int(resp.ContentLength)))
-	if _, err = io.Copy(&buf, resp.Body); err != nil {
+	if err = httpreq.ReadResponseBody(&buf, resp, maxResponseBodySize); err != nil {
 		return result, fmt.Errorf("failed to read response: %w", err)
 	}
 	bodyBytes := buf.Bytes()

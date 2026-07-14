@@ -57,3 +57,21 @@ func NewFormRequest(ctx context.Context, method, url string, values url.Values) 
 	req.Header["Content-Type"] = []string{"application/x-www-form-urlencoded"}
 	return req, nil
 }
+
+// ReadResponseBody reads up to maxSize bytes from the response body into buf.
+// If the size of the response body exceeds maxSize, an error is returned.
+func ReadResponseBody(buf *bytes.Buffer, resp *http.Response, maxSize int64) error {
+	if resp.ContentLength > maxSize {
+		return fmt.Errorf("response body too large: %d bytes (max %d bytes)", resp.ContentLength, maxSize)
+	}
+	buf.Grow(max(0, int(resp.ContentLength)))
+	r := io.LimitReader(resp.Body, maxSize+1)
+	n, err := io.Copy(buf, r)
+	if err != nil {
+		return err
+	}
+	if n > maxSize {
+		return fmt.Errorf("response body too large: %d bytes (max %d bytes)", n, maxSize)
+	}
+	return nil
+}

@@ -8,6 +8,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -136,6 +137,9 @@ func (s *Source) Snapshot(ctx context.Context) (producer.Message, error) {
 		return producer.Message{}, fmt.Errorf("AJAX status failed with status %d", resp.StatusCode)
 	}
 
+	const maxResponseBodySize = 1024 * 1024 // 1 MiB
+	r := io.LimitReader(resp.Body, maxResponseBodySize)
+
 	// Parse the XML response and extract the IP address.
 	// The response is expected to be in the following format:
 	//
@@ -151,7 +155,7 @@ func (s *Source) Snapshot(ctx context.Context) (producer.Message, error) {
 	}
 
 	var dm deviceMap
-	if err := xml.NewDecoder(resp.Body).Decode(&dm); err != nil {
+	if err := xml.NewDecoder(r).Decode(&dm); err != nil {
 		return producer.Message{}, fmt.Errorf("failed to decode AJAX status XML: %w", err)
 	}
 

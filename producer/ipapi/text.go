@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/netip"
@@ -129,19 +128,22 @@ func (s *textSource) get(ctx context.Context) (netip.Addr, error) {
 	if err != nil {
 		return netip.Addr{}, fmt.Errorf("failed to send request: %w", err)
 	}
+	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return netip.Addr{}, fmt.Errorf("unexpected status code %d: %q", resp.StatusCode, body)
-	}
-	if err != nil {
+	const maxResponseBodySize = int64(len("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff") + 25) // 64
+	var buf bytes.Buffer
+	if err = httpreq.ReadResponseBody(&buf, resp, maxResponseBodySize); err != nil {
 		return netip.Addr{}, fmt.Errorf("failed to read response body: %w", err)
 	}
+	bodyBytes := buf.Bytes()
 
-	body = bytes.TrimSpace(body)
+	if resp.StatusCode != http.StatusOK {
+		return netip.Addr{}, fmt.Errorf("unexpected status code %d: %q", resp.StatusCode, bodyBytes)
+	}
 
-	addr, err := netip.ParseAddr(string(body))
+	bodyBytes = bytes.TrimSpace(bodyBytes)
+
+	addr, err := netip.ParseAddr(string(bodyBytes))
 	if err != nil {
 		return netip.Addr{}, fmt.Errorf("failed to parse IP address: %w", err)
 	}
