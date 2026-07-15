@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	ddnsgo "github.com/database64128/ddns-go"
 )
@@ -74,4 +76,27 @@ func ReadResponseBody(buf *bytes.Buffer, resp *http.Response, maxSize int64) err
 		return fmt.Errorf("response body too large: %d bytes (max %d bytes)", n, maxSize)
 	}
 	return nil
+}
+
+// DefaultHttpTransportClone returns a clone of [http.DefaultTransport] if possible,
+// or a best-effort approximation of the original if it has been changed by user code
+// to a custom implementation.
+func DefaultHttpTransportClone() *http.Transport {
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		dialer := net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}
+		return &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           dialer.DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
+	}
+	return transport.Clone()
 }

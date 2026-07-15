@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/netip"
 	"sync"
-	"time"
 
 	"github.com/database64128/ddns-go/internal/httpreq"
 	"github.com/database64128/ddns-go/producer"
@@ -150,28 +149,10 @@ func (s *textSource) get(ctx context.Context) (netip.Addr, error) {
 	return addr.Unmap(), nil
 }
 
-func defaultHttpTransportClone() *http.Transport {
-	transport, ok := http.DefaultTransport.(*http.Transport)
-	if !ok {
-		// http.DefaultTransport was changed by user code to some custom implementation,
-		// so here we create a best-effort approximation of the original.
-		return &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-			// DialContext will be set by caller.
-			ForceAttemptHTTP2:     true,
-			MaxIdleConns:          100,
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-		}
-	}
-	return transport.Clone()
-}
-
 // defaultHttpClient4 returns an [*http.Client] that behaves like
 // [http.DefaultClient] but forces connections to use IPv4 only.
 var defaultHttpClient4 = sync.OnceValue(func() *http.Client {
-	transport := defaultHttpTransportClone()
+	transport := httpreq.DefaultHttpTransportClone()
 	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		switch network {
 		case "tcp":
@@ -188,7 +169,7 @@ var defaultHttpClient4 = sync.OnceValue(func() *http.Client {
 // defaultHttpClient6 returns an [*http.Client] that behaves like
 // [http.DefaultClient] but forces connections to use IPv6 only.
 var defaultHttpClient6 = sync.OnceValue(func() *http.Client {
-	transport := defaultHttpTransportClone()
+	transport := httpreq.DefaultHttpTransportClone()
 	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		switch network {
 		case "tcp":
