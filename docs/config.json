@@ -12,6 +12,21 @@
             }
         },
         {
+            "name": "unifi",
+            "type": "unifiapi",
+            "unifiapi": {
+                "base_url": "https://192.168.1.1",
+                "api_key": "",
+                "site_id": "",
+                "device_id": "",
+                "root_ca_paths": [
+                    "unifi-local-chain.pem"
+                ],
+                "server_name": "unifi.local",
+                "poll_interval": "5m"
+            }
+        },
+        {
             "name": "ipify4",
             "type": "ipapi",
             "ipapi": {

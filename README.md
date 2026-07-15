@@ -10,6 +10,7 @@
 
 - Multiple IP address sources
     - `"asusrouter"`: Obtain WAN IPv4 address from ASUS router.
+    - `"unifiapi"`: Obtain device IPv4 address from Ubiquiti UniFi API.
     - `"ipapi"`: Obtain public IPv4 and IPv6 addresses from IP address APIs.
     - `"ssh"`: Obtain IPv4 and IPv6 addresses from a remote host via SSH.
     - Monitor network interface IPv4 and IPv6 addresses

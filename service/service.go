@@ -18,6 +18,7 @@ import (
 	"github.com/database64128/ddns-go/producer/ipapi"
 	"github.com/database64128/ddns-go/producer/netlink"
 	"github.com/database64128/ddns-go/producer/sshclient"
+	"github.com/database64128/ddns-go/producer/unifiapi"
 	"github.com/database64128/ddns-go/producer/win32iphlp"
 	"github.com/database64128/ddns-go/provider"
 	"github.com/database64128/ddns-go/provider/cloudflare"
@@ -184,6 +185,7 @@ type SourceConfig struct {
 	// Type is the type of the source.
 	//
 	//   - "asusrouter": ASUS router.
+	//   - "unifiapi": Ubiquiti UniFi API.
 	//   - "ipapi": IP address API.
 	//   - "ssh": SSH client.
 	//   - "iface": Network interface (generic).
@@ -194,6 +196,9 @@ type SourceConfig struct {
 
 	// ASUSRouter is the producer configuration for an ASUS router source.
 	ASUSRouter asusrouter.ProducerConfig `json:"asusrouter,omitzero"`
+
+	// UniFiAPI is the producer configuration for a Ubiquiti UniFi API source.
+	UniFiAPI unifiapi.ProducerConfig `json:"unifiapi,omitzero"`
 
 	// IPAPI is the producer configuration for an IP address API source.
 	IPAPI ipapi.ProducerConfig `json:"ipapi,omitzero"`
@@ -219,6 +224,8 @@ func (cfg *SourceConfig) NewProducer(client *http.Client, logger *tslog.Logger) 
 	switch cfg.Type {
 	case "asusrouter":
 		return cfg.ASUSRouter.NewProducer(client, logger)
+	case "unifiapi":
+		return cfg.UniFiAPI.NewProducer(client, logger)
 	case "ipapi":
 		return cfg.IPAPI.NewProducer(client, logger)
 	case "ssh":
