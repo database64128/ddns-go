@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -58,7 +59,7 @@ func (c *Client) GetDeviceIPAddress(ctx context.Context, siteID, deviceID string
 	if err := clientDo(c.client, c.apiKey, func() (*http.Request, error) {
 		return http.NewRequestWithContext(ctx, http.MethodGet, deviceURL, nil)
 	}, &device); err != nil {
-		return netip.Addr{}, fmt.Errorf("failed to get device info: %w", err)
+		return netip.Addr{}, err
 	}
 
 	return device.IPAddress, nil
@@ -113,7 +114,21 @@ type Error struct {
 	RequestID   string    `json:"requestId"`
 }
 
+// Error implements [error].
 func (e *Error) Error() string {
 	return fmt.Sprintf("status: %d %s, code: %s, message: %s, timestamp: %s, requestPath: %s, requestId: %s",
 		e.StatusCode, e.StatusName, e.Code, e.Message, e.Timestamp.Format(time.RFC3339), e.RequestPath, e.RequestID)
+}
+
+// LogValue implements [slog.LogValuer].
+func (e *Error) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.Int("statusCode", e.StatusCode),
+		slog.String("statusName", e.StatusName),
+		slog.String("code", e.Code),
+		slog.String("message", e.Message),
+		slog.Time("timestamp", e.Timestamp),
+		slog.String("requestPath", e.RequestPath),
+		slog.String("requestId", e.RequestID),
+	)
 }

@@ -51,7 +51,7 @@ var _ producer.Source = (*Source)(nil)
 func (s *Source) Snapshot(ctx context.Context) (producer.Message, error) {
 	addr, err := s.client.GetDeviceIPAddress(ctx, s.siteID, s.deviceID)
 	if err != nil {
-		return producer.Message{}, fmt.Errorf("failed to get device IP address: %w", err)
+		return producer.Message{}, err
 	}
 	if !addr.Is4() {
 		return producer.Message{}, fmt.Errorf("not an IPv4 address: %s", addr)
