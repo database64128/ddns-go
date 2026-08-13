@@ -387,40 +387,19 @@ func (cfg *ProducerConfig) NewProducer(logger *tslog.Logger) (producer.Producer,
 		hostKeyCallback = knownHostsCallback
 	}
 
-	// Remove this workaround once https://go-review.googlesource.com/c/crypto/+/800080
-	// is merged and released.
-	var (
-		keyExchanges      []string
-		ciphers           []string
-		macs              []string
-		hostKeyAlgorithms []string
-	)
-	if len(cfg.KeyExchanges) > 0 {
-		keyExchanges = cfg.KeyExchanges
-	}
-	if len(cfg.Ciphers) > 0 {
-		ciphers = cfg.Ciphers
-	}
-	if len(cfg.MACs) > 0 {
-		macs = cfg.MACs
-	}
-	if len(cfg.HostKeyAlgorithms) > 0 {
-		hostKeyAlgorithms = cfg.HostKeyAlgorithms
-	}
-
 	srcCfg := SourceConfig{
 		Command4:          cfg.Command4,
 		Command6:          cfg.Command6,
 		Network:           cfg.Network,
 		Address:           cfg.Address,
-		KeyExchanges:      keyExchanges,
-		Ciphers:           ciphers,
-		MACs:              macs,
+		KeyExchanges:      cfg.KeyExchanges,
+		Ciphers:           cfg.Ciphers,
+		MACs:              cfg.MACs,
 		User:              cfg.User,
 		Auth:              authMethods,
 		AgentClient:       agentClient,
 		HostKeyCallback:   hostKeyCallback,
-		HostKeyAlgorithms: hostKeyAlgorithms,
+		HostKeyAlgorithms: cfg.HostKeyAlgorithms,
 	}
 	source := srcCfg.NewSource()
 
