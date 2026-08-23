@@ -1,15 +1,16 @@
 package unifiapi
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"time"
+	"uuid"
 
 	"github.com/database64128/ddns-go/internal/httpreq"
 )
@@ -46,8 +47,8 @@ func NewClient(client *http.Client, baseURL, apiKey string) (*Client, error) {
 }
 
 // GetDeviceIPAddress returns the IP address of the specified device in the specified site.
-func (c *Client) GetDeviceIPAddress(ctx context.Context, siteID, deviceID string) (netip.Addr, error) {
-	deviceURL, err := url.JoinPath(c.sitesURL, siteID, "devices", deviceID)
+func (c *Client) GetDeviceIPAddress(ctx context.Context, siteID, deviceID uuid.UUID) (netip.Addr, error) {
+	deviceURL, err := url.JoinPath(c.sitesURL, siteID.String(), "devices", deviceID.String())
 	if err != nil {
 		return netip.Addr{}, fmt.Errorf("failed to join device URL: %w", err)
 	}
@@ -82,21 +83,17 @@ func clientDo(client *http.Client, apiKey string, newRequest func() (*http.Reque
 	defer resp.Body.Close()
 
 	const maxResponseBodySize = 128 * 1024 * 1024 // 128 MiB
-	var buf bytes.Buffer
-	if err := httpreq.ReadResponseBody(&buf, resp, maxResponseBodySize); err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
-	}
-	bodyBytes := buf.Bytes()
+	r := io.LimitReader(resp.Body, maxResponseBodySize)
 
 	if resp.StatusCode != http.StatusOK {
 		var apiErr Error
-		if err := json.Unmarshal(bodyBytes, &apiErr); err != nil {
+		if err := json.UnmarshalRead(r, &apiErr); err != nil {
 			return fmt.Errorf("failed to unmarshal API error response: %w", err)
 		}
 		return &apiErr
 	}
 
-	if err := json.Unmarshal(bodyBytes, v); err != nil {
+	if err := json.UnmarshalRead(r, v); err != nil {
 		return fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 

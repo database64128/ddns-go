@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"time"
+	"uuid"
 
 	"github.com/database64128/ddns-go/internal/httpreq"
 	"github.com/database64128/ddns-go/jsoncfg"
@@ -22,15 +23,15 @@ import (
 // Source implements [producer.Source].
 type Source struct {
 	client   *Client
-	siteID   string
-	deviceID string
+	siteID   uuid.UUID
+	deviceID uuid.UUID
 }
 
 // NewSource creates a new [Source].
 //
 //   - If client is nil, [http.DefaultClient] is used.
 //   - If baseURL is empty, it defaults to "https://unifi.local".
-func NewSource(client *http.Client, baseURL, apiKey, siteID, deviceID string) (*Source, error) {
+func NewSource(client *http.Client, baseURL, apiKey string, siteID, deviceID uuid.UUID) (*Source, error) {
 	c, err := NewClient(client, baseURL, apiKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create UniFi API client: %w", err)
@@ -70,10 +71,10 @@ type ProducerConfig struct {
 	APIKey string `json:"api_key"`
 
 	// SiteID is the site ID.
-	SiteID string `json:"site_id"`
+	SiteID uuid.UUID `json:"site_id"`
 
 	// DeviceID is the device ID.
-	DeviceID string `json:"device_id"`
+	DeviceID uuid.UUID `json:"device_id"`
 
 	// RootCAPaths is a list of paths to PEM-encoded root CA certificates for verifying TLS server certificates.
 	//

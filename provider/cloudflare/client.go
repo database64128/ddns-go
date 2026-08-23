@@ -1,10 +1,10 @@
 package cloudflare
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -237,18 +237,10 @@ func clientDo[R any](client *http.Client, authorizationHeader string, newRequest
 	defer resp.Body.Close()
 
 	const maxResponseBodySize = 128 * 1024 * 1024 // 128 MiB
-	var buf bytes.Buffer
-	if err = httpreq.ReadResponseBody(&buf, resp, maxResponseBodySize); err != nil {
-		return result, fmt.Errorf("failed to read response: %w", err)
-	}
-	bodyBytes := buf.Bytes()
-
-	if resp.StatusCode != http.StatusOK {
-		return result, fmt.Errorf("%w: unexpected status code %d: %q", provider.ErrAPIResponseFailure, resp.StatusCode, bodyBytes)
-	}
+	r := io.LimitReader(resp.Body, maxResponseBodySize)
 
 	var response Response[R]
-	if err = json.Unmarshal(bodyBytes, &response); err != nil {
+	if err = json.UnmarshalRead(r, &response); err != nil {
 		return result, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
