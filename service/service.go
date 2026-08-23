@@ -31,10 +31,10 @@ type Config struct {
 	Sources []SourceConfig `json:"sources"`
 
 	// Accounts is the configuration for the provider accounts.
-	Accounts []AccountConfig `json:"accounts"`
+	Accounts []AccountConfig `json:"accounts,omitzero"`
 
 	// Domains is the configuration for the managed domains.
-	Domains []DomainConfig `json:"domains"`
+	Domains []DomainConfig `json:"domains,omitzero"`
 
 	// StartupDelay is the amount of time to wait before starting the service.
 	// This can be useful if the service is started before the network is ready.
@@ -268,7 +268,7 @@ type DomainConfig struct {
 	Provider string `json:"provider"`
 
 	// Cloudflare is the configuration for a Cloudflare domain.
-	Cloudflare cloudflare.KeeperConfig `json:"cloudflare"`
+	Cloudflare cloudflare.KeeperConfig `json:"cloudflare,omitzero"`
 
 	// Account is the name of the provider account to use.
 	Account string `json:"account"`

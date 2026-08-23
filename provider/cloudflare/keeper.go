@@ -18,13 +18,13 @@ type KeeperConfig struct {
 	ZoneID string `json:"zone_id"`
 
 	// ARecord is the configuration for the managed A record.
-	ARecord RecordConfig `json:"a_record"`
+	ARecord RecordConfig `json:"a_record,omitzero"`
 
 	// AAAARecord is the configuration for the managed AAAA record.
-	AAAARecord RecordConfig `json:"aaaa_record"`
+	AAAARecord RecordConfig `json:"aaaa_record,omitzero"`
 
 	// HTTPSRecord is the configuration for the managed HTTPS record.
-	HTTPSRecord RecordConfig `json:"https_record"`
+	HTTPSRecord RecordConfig `json:"https_record,omitzero"`
 }
 
 // RecordConfig contains configuration options for a managed DNS record.
@@ -38,10 +38,10 @@ type RecordConfig struct {
 	//
 	//	When SvcPriority is 0, the SVCB record is in AliasMode (Section 2.4.2).
 	//	Otherwise, it is in ServiceMode (Section 2.4.3).
-	Priority uint16 `json:"priority"`
+	Priority uint16 `json:"priority,omitzero"`
 
 	// Proxied controls whether to proxy the A/AAAA record through Cloudflare.
-	Proxied bool `json:"proxied"`
+	Proxied bool `json:"proxied,omitzero"`
 
 	// TTL is the TTL of the managed DNS record in seconds.
 	// Setting to 1 means 'automatic'. Value must be between 60 and 86400,
@@ -50,17 +50,17 @@ type RecordConfig struct {
 
 	// Target is the target of the managed HTTPS DNS record.
 	// If empty, "." is used.
-	Target string `json:"target"`
+	Target string `json:"target,omitzero"`
 
 	// SvcParams are additional SvcParamKey=SvcParamValue pairs for the managed HTTPS DNS record.
 	// Depending on the configured sources, "ipv4hint" and/or "ipv6hint" may not be allowed in the list.
-	SvcParams string `json:"svc_params"`
+	SvcParams string `json:"svc_params,omitzero"`
 
 	// Comment is a comment about the managed DNS record.
-	Comment string `json:"comment"`
+	Comment string `json:"comment,omitzero"`
 
 	// Tags are custom tags for the managed DNS record.
-	Tags []string `json:"tags"`
+	Tags []string `json:"tags,omitzero"`
 }
 
 // Keeper interacts with Cloudflare's API to manage a domain's DNS records.
