@@ -32,27 +32,21 @@ func (cfg *ProducerConfig) newProducer(logger *tslog.Logger) (*Producer, error) 
 	var rulemgr *ruleManager
 	if cfg.FromAddrLookupMain {
 		rulemgr = &ruleManager{
-			updateCh: make(chan addrUpdate),
-			conn: conn{
-				logger:        logger,
-				socketOptions: sockOpts,
-				respCh:        make(chan response),
-			},
+			updateCh:      make(chan addrUpdate),
+			logger:        logger,
+			socketOptions: sockOpts,
+			respCh:        make(chan response),
 		}
 	}
 
 	return &Producer{
-		producer: producer{
-			conn: conn{
-				logger:        logger,
-				socketOptions: sockOpts,
-				respCh:        make(chan response),
-			},
-			broadcaster: broadcaster.New(),
-			ruleManager: rulemgr,
-			resyncCh:    make(chan struct{}),
-			ifname:      cfg.Interface,
-		},
+		logger:        logger,
+		socketOptions: sockOpts,
+		respCh:        make(chan response),
+		broadcaster:   broadcaster.New(),
+		ruleManager:   rulemgr,
+		resyncCh:      make(chan struct{}),
+		ifname:        cfg.Interface,
 	}, nil
 }
 

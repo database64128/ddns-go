@@ -145,11 +145,9 @@ func (s *Source) Snapshot(ctx context.Context) (producer.Message, error) {
 			s.agentClient.SetContext(ctx)
 		}
 		c, chans, req, err := ssh.NewClientConn(s.netConn, s.address, &ssh.ClientConfig{
-			Config: ssh.Config{
-				KeyExchanges: s.keyExchanges,
-				Ciphers:      s.ciphers,
-				MACs:         s.macs,
-			},
+			KeyExchanges:      s.keyExchanges,
+			Ciphers:           s.ciphers,
+			MACs:              s.macs,
 			User:              s.user,
 			Auth:              s.auth,
 			HostKeyCallback:   s.hostKeyCallback,

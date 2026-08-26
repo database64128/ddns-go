@@ -36,11 +36,9 @@ func NewTextIPv4Source(client *http.Client, url, userAgent string) *TextIPv4Sour
 		userAgent = httpreq.DefaultUserAgent
 	}
 	return &TextIPv4Source{
-		textSource: textSource{
-			client:    client,
-			url:       url,
-			userAgent: userAgent,
-		},
+		client:    client,
+		url:       url,
+		userAgent: userAgent,
 	}
 }
 
@@ -83,11 +81,9 @@ func NewTextIPv6Source(client *http.Client, url, userAgent string) *TextIPv6Sour
 		userAgent = httpreq.DefaultUserAgent
 	}
 	return &TextIPv6Source{
-		textSource: textSource{
-			client:    client,
-			url:       url,
-			userAgent: userAgent,
-		},
+		client:    client,
+		url:       url,
+		userAgent: userAgent,
 	}
 }
 
