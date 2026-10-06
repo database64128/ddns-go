@@ -4,6 +4,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+Type=notify
 ExecStart=/usr/bin/ddns-go -confPath /etc/ddns-go/config.json -logNoTime
 
 [Install]

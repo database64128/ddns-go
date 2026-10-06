@@ -147,6 +147,10 @@ type Service struct {
 // Run starts the DDNS service.
 // It blocks until the provided context is canceled.
 func (s *Service) Run(ctx context.Context) {
+	notifyStatus := newStatusNotifier(ctx)
+	notifyStatus.Ready()
+	notifyStatus.Close()
+
 	if s.startupDelay > 0 {
 		s.logger.Info("Waiting before starting service", slog.Duration("delay", s.startupDelay))
 		select {
